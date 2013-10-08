@@ -13,7 +13,9 @@ if len(sys.argv) > 2:
 if not tcp:
     raise Exception("UDP NYI")
     
-    
+
+
+HEARTBEAT_INTERVAL = None    
 users = {}
     
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -22,7 +24,16 @@ sock.listen(0)
 
 for _ in range(2): # por enquanto, para poder matar
     new_client, client_address = sock.accept()
-    print(client_address)
+    new_client.settimeout(HEARTBEAT_INTERVAL)
+    
+    commands = []
+    while True:
+        data = new_client.recv(2048)
+        if len(data) == 0:
+            break
+        commands.extend(data.split('\n'))
+    for command in commands:
+        print(0, command)
     new_client.close()
 
 sock.close()
