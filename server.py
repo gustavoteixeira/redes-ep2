@@ -23,17 +23,16 @@ sock.bind(("0.0.0.0", port))
 sock.listen(0)
 
 for _ in range(2): # por enquanto, para poder matar
+    print("== WATING FOR CLIENT!")
     new_client, client_address = sock.accept()
     new_client.settimeout(HEARTBEAT_INTERVAL)
     
-    commands = []
     while True:
         data = new_client.recv(2048)
         if len(data) == 0:
             break
-        commands.extend(data.split('\n'))
-    for command in commands:
-        print(0, command)
+        for command in filter(None, data.splitlines()):
+            print(0, command)
     new_client.close()
 
 sock.close()
