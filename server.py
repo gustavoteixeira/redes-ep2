@@ -1,56 +1,97 @@
 from socket import *
 import socket, ssl, sys, threading
 
-class ClientThread(threading.Thread):
+server_running = True
+HEARTBEAT_INTERVAL = 20
+users = {}
 
+class ClientThread(threading.Thread):
     def __init__(self, ip, port, socket):
         threading.Thread.__init__(self)
         self.ip = ip
         self.port = port
         self.socket = socket
         self.running = True
+        self.username = None
         self.buffer = []
         
-    def fetch_commands(self):
+    def fetch_messages(self):
         try:
             data = self.socket.recv(2048)
         except socket.timeout:
             return False
         if len(data) == 0:
             return False
-        for command in filter(None, data.splitlines()):
-            self.buffer.insert(0, command)
+        for message in filter(None, data.splitlines()):
+            self.buffer.insert(0, message)
         return True
         
-    def get_command(self):
+    def get_message(self):
         while not self.buffer:
-            if not self.fetch_commands():
+            if not self.fetch_messages():
                 return None
         return self.buffer.pop()
         
+    def command_login(self, args):
+        if self.username:
+            self.socket.send("ALREADY_LOGGED_IN\n")
+            return
+            
+        try_username = args.split(' ', 1)[0]
+        if try_username in users:
+            self.socket.send("USER_ALREADY_EXISTS\n")
+            return
+        
+        self.username = try_username
+        users[self.username] = self
+        self.socket.send("WELCOME\n")
+
+    def command_heartbeat(self, args):
+        pass
+        
+    def command_listusers(self, args):
+        for user in users:
+            self.socket.send(user + "\n")
+        self.socket.send("\n")
+        
+    def command_killserver(self, args):
+        global server_running
+        server_running = False
+        
+    def command_logout(self, args):
+        self.running = False
 
     def run(self):
         print("[+] New thread started for %s:%s" % (self.ip, self.port))
-        while self.running:
-            command = self.get_command()
-            if not command:
-                self.running = False
-                break
-            if command.split(' ', 1)[0].upper() == 'LOGIN':
-                try_username = command.split(' ', 1)[1]
-                if try_username in users:
-                    self.socket.send("USER_ALREADY_EXISTS\n")
+        try:
+            while self.running:
+                message = self.get_message()
+                if not message:
+                    self.running = False
+                    break
+                result = message.split(' ', 1)
+                command = result[0]
+                arguments = ""
+                if len(result) > 1: arguments = result[1]
+                command = command.upper()
+                if command not in ClientThread.commands:
+                    self.socket.send("UNKNOWN_COMMAND\n")
                 else:
-                    username = try_username
-                    users[username] = True
-                    self.socket.send("WELCOME\n")
-                # STUFF TO DO ON LOGIN
-            elif command.upper() == "LOGOUT":
-                self.running = False
-            else: # command == "HEARTBEAT"
-                pass
+                    ClientThread.commands[command](self, arguments)
+        except Exception, e:
+            print("[+] Thread for %s:%s crashed! Reason: %s" % (self.ip, self.port, e))
+        if self.username:
+            del users[self.username]
         self.socket.close()
         print("[+] Thread for %s:%s finished" % (self.ip, self.port))
+    
+    commands = {
+        'LOGIN': command_login,
+        'HEARTBEAT': command_heartbeat,
+        'LISTUSERS': command_listusers,
+        'KILLSERVER': command_killserver,
+        'LOGOUT': command_logout
+    }
 
 
 server_listen_port = int(sys.argv[1])
@@ -66,17 +107,12 @@ if len(sys.argv) > 2:
 if not tcp:
     raise Exception("UDP NYI")
     
-
-
-HEARTBEAT_INTERVAL = 20
-users = {}
-    
 serversock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 serversock.bind(("0.0.0.0", server_listen_port))
 serversock.listen(0)
 threads = []
 
-while True:
+while server_running:
     print("== WAITING FOR CLIENT! ==")
     (clientsock, (ip, port)) = serversock.accept()
     clientsock.settimeout(HEARTBEAT_INTERVAL)
