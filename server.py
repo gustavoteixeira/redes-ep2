@@ -39,22 +39,28 @@ class ClientThread(threading.Thread):
             self.socket.send("ALREADY_LOGGED_IN\n")
             return
             
-        try_username = args.split(' ', 1)[0]
+        try:
+            (try_username, listen_port) = args.split(' ', 1)
+            listen_port = int(listen_port)
+        except ValueError:
+            self.socket.send("INPUT_ERROR\n")
+            return
+            
         if try_username in users:
             self.socket.send("USER_ALREADY_EXISTS\n")
             return
         
         self.username = try_username
+        self.listen_port = listen_port
         users[self.username] = self
         self.socket.send("WELCOME\n")
 
     def command_heartbeat(self, args):
+        self.socket.send("OK\n")
         pass
         
     def command_listusers(self, args):
-        for user in users:
-            self.socket.send(user + "\n")
-        self.socket.send("\n")
+        self.socket.send(reduce(lambda a, b: a + "\n" + b, users) + "\n\n")
         
     def command_requestchat(self, target_user):
         if target_user not in users:
@@ -66,20 +72,32 @@ class ClientThread(threading.Thread):
             return
             
         users[target_user].notifications.insert(0, "CHAT_REQUEST " + self.username)
+        self.socket.send("OK\n")
     
     def command_enterchat(self, target_user):
         self.in_chat = target_user
+        self.socket.send("OK\n")
         
         
     def command_leavechat(self, args):
         self.in_chat = None
+        self.socket.send("OK\n")
         
     def command_killserver(self, args):
         global server_running
         server_running = False
+        self.socket.send("OK\n")
+        
+    def command_queryuserinfo(self, target_user):
+        if target_user not in users:
+            self.socket.send("UNKNOWN_USER\n")
+            return
+        user = users[target_user]
+        self.socket.send("%s %s\n" % (user.ip, user.port))
         
     def command_logout(self, args):
         self.running = False
+        self.socket.send("BYE\n")
 
     def run(self):
         print("[+] New thread started for %s:%s" % (self.ip, self.port))
@@ -126,6 +144,7 @@ class ClientThread(threading.Thread):
         'REQUESTCHAT': permissionchecker_islogged,
         'ENTERCHAT': permissionchecker_islogged,
         'LEAVECHAT': permissionchecker_islogged,
+        'QUERYUSERINFO': permissionchecker_islogged,
         'LOGOUT': permissionchecker_islogged
     }
     commands = {
@@ -136,6 +155,7 @@ class ClientThread(threading.Thread):
         'REQUESTCHAT': command_requestchat,
         'ENTERCHAT': command_enterchat,
         'LEAVECHAT': command_leavechat,
+        'QUERYUSERINFO': command_queryuserinfo,
         'LOGOUT': command_logout
     }
 
@@ -156,7 +176,6 @@ if not tcp:
 serversock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 serversock.bind(("0.0.0.0", server_listen_port))
 serversock.listen(0)
-threads = []
 
 while server_running:
     print("== WAITING FOR CLIENT! ==")
@@ -164,9 +183,5 @@ while server_running:
     clientsock.settimeout(HEARTBEAT_INTERVAL)
     newthread = ClientThread(ip, port, clientsock)
     newthread.start()
-    threads.append(newthread)
-
-for thread in threads:
-    thread.join()
 
 serversock.close()
