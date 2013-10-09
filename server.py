@@ -15,7 +15,7 @@ if not tcp:
     
 
 
-HEARTBEAT_INTERVAL = None    
+HEARTBEAT_INTERVAL = 20
 users = {}
     
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -27,12 +27,33 @@ for _ in range(2): # por enquanto, para poder matar
     new_client, client_address = sock.accept()
     new_client.settimeout(HEARTBEAT_INTERVAL)
     
-    while True:
-        data = new_client.recv(2048)
+    username = None
+    client_running = True
+    
+    while client_running:
+        try:
+            data = new_client.recv(2048)
+        except socket.timeout:
+            break
         if len(data) == 0:
             break
         for command in filter(None, data.splitlines()):
-            print(0, command)
+            if command.split(' ', 1)[0].upper() == 'LOGIN':
+                try_username = command.split(' ', 1)[1]
+                if try_username in users:
+                    new_client.send("USER_ALREADY_EXISTS\n")
+                else:
+                    username = try_username
+                    users[username] = True
+                    new_client.send("WELCOME\n")
+                # STUFF TO DO ON LOGIN
+            elif command.upper() == "LOGOUT":
+                client_running = False
+                break
+            else: # command == "HEARTBEAT"
+                pass
+    if username:
+        del users[username]
     new_client.close()
 
 sock.close()
