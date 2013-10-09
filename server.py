@@ -2,7 +2,7 @@ from socket import *
 import socket, ssl, sys, threading
 
 server_running = True
-HEARTBEAT_INTERVAL = 20
+HEARTBEAT_INTERVAL = None
 users = {}
 
 class ClientThread(threading.Thread):
@@ -13,7 +13,9 @@ class ClientThread(threading.Thread):
         self.socket = socket
         self.running = True
         self.username = None
+        self.in_chat = None
         self.buffer = []
+        self.notifications = []
         
     def fetch_messages(self):
         try:
@@ -54,6 +56,24 @@ class ClientThread(threading.Thread):
             self.socket.send(user + "\n")
         self.socket.send("\n")
         
+    def command_requestchat(self, target_user):
+        if target_user not in users:
+            self.socket.send("UNKNOWN_USER\n")
+            return
+            
+        if users[target_user].in_chat:
+            self.socket.send("USER_IS_BUSY\n")
+            return
+            
+        users[target_user].notifications.insert(0, "CHAT_REQUEST " + self.username)
+    
+    def command_enterchat(self, target_user):
+        self.in_chat = target_user
+        
+        
+    def command_leavechat(self, args):
+        self.in_chat = None
+        
     def command_killserver(self, args):
         global server_running
         server_running = False
@@ -65,6 +85,10 @@ class ClientThread(threading.Thread):
         print("[+] New thread started for %s:%s" % (self.ip, self.port))
         try:
             while self.running:
+            
+                while self.notifications:
+                    self.socket.send("NOTIFICATION " + self.notifications.pop() + "\n")
+            
                 message = self.get_message()
                 if not message:
                     self.running = False
@@ -76,6 +100,11 @@ class ClientThread(threading.Thread):
                 command = command.upper()
                 if command not in ClientThread.commands:
                     self.socket.send("UNKNOWN_COMMAND\n")
+                elif command not in ClientThread.permission_checker:
+                    print("[ERROR] Valid command without permission checker")
+                    self.socket.send("INTERNAL_ERROR\n")
+                elif not ClientThread.permission_checker[command](self):
+                    self.socket.send("PERMISSION_DENIED\n")
                 else:
                     ClientThread.commands[command](self, arguments)
         except Exception, e:
@@ -85,11 +114,28 @@ class ClientThread(threading.Thread):
         self.socket.close()
         print("[+] Thread for %s:%s finished" % (self.ip, self.port))
     
+    
+    def permissionchecker_islogged(self):
+        return self.username is not None
+            
+    permission_checker = {
+        'LOGIN': lambda x: True,
+        'HEARTBEAT': permissionchecker_islogged,
+        'LISTUSERS': permissionchecker_islogged,
+        'KILLSERVER': permissionchecker_islogged,
+        'REQUESTCHAT': permissionchecker_islogged,
+        'ENTERCHAT': permissionchecker_islogged,
+        'LEAVECHAT': permissionchecker_islogged,
+        'LOGOUT': permissionchecker_islogged
+    }
     commands = {
         'LOGIN': command_login,
         'HEARTBEAT': command_heartbeat,
         'LISTUSERS': command_listusers,
         'KILLSERVER': command_killserver,
+        'REQUESTCHAT': command_requestchat,
+        'ENTERCHAT': command_enterchat,
+        'LEAVECHAT': command_leavechat,
         'LOGOUT': command_logout
     }
 
