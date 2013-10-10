@@ -62,7 +62,7 @@ class ClientThread(threading.Thread):
         pass
         
     def command_listusers(self, args):
-        self.socket.send(reduce(lambda a, b: a + "\n" + b, users) + "\n\n")
+        self.socket.send(reduce(lambda a, b: a + " " + b, users) + "\n")
         
     def command_requestchat(self, target_user):
         if target_user not in users:
@@ -73,14 +73,13 @@ class ClientThread(threading.Thread):
             self.socket.send("USER_IS_BUSY\n")
             return
             
-        users[target_user].notifications.insert(0, "CHAT_REQUEST " + self.username)
+        users[target_user].notifications.insert(0, "CHATREQUEST " + self.username)
         self.socket.send("OK\n")
     
     def command_enterchat(self, target_user):
         self.in_chat = target_user
         self.socket.send("OK\n")
-        
-        
+    
     def command_leavechat(self, args):
         self.in_chat = None
         self.socket.send("OK\n")
@@ -95,7 +94,7 @@ class ClientThread(threading.Thread):
             self.socket.send("UNKNOWN_USER\n")
             return
         user = users[target_user]
-        self.socket.send("%s %s\n" % (user.ip, user.port))
+        self.socket.send("%s %s\n" % (user.ip, user.listen_port))
         
     def command_logout(self, args):
         self.running = False

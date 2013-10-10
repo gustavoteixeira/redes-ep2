@@ -1,4 +1,4 @@
-﻿import socket, sys, re
+﻿import socket, sys, re, select
 
 import common
 
@@ -29,7 +29,7 @@ class ListenMessage: pass
 
 def command_users(server, args):
     server.send("LISTUSERS\n")
-    userlist = server.receive().strip().splitlines()
+    userlist = server.receive().strip().split(' ')
     print("Users:")
     for user in userlist:
         print(">> %s" % user)
@@ -65,6 +65,29 @@ commands = {
     'exit': command_exit
 }
 
+def notification_chatrequest(server, args):
+    target_user = args[0]
+    accept = False
+    while True:
+        resp = raw_input("Chat request from '%s', accept? (y/n)" % target_user).lower()
+        if resp == 'y' or resp == 'n':
+            accept = (resp == 'y')
+            break
+    if not accept:
+        # Modo FDP, ignorar simplismente.
+        return
+    
+    serversock.send("QUERYUSERINFO %s\n" % target_user)
+    (target_ip, target_port) = serversock.receive().strip().split(' ')
+    p2psock = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "P")
+    p2psock.connect((target_ip, int(target_port)))
+    p2psock.send("nope.avi\n")
+    p2psock.close()
+
+notification_handler = {
+    'CHATREQUEST': notification_chatrequest
+}
+
 try:
     your_username = None
     while True:
@@ -88,6 +111,17 @@ try:
     chat_running = True
     while chat_running:
         input = raw_input("> ").strip()
+        
+        (readvalid, _, _) = select.select([serversock], [], [], 0.01)
+        if serversock in readvalid:
+            notification = serversock.receive().strip().split(' ')
+            if notification[0].upper() != "NOTIFICATION":
+                print("Unexpected message from server: %s" % repr(notification))
+            elif notification[1].upper() not in notification_handler:
+                print("Unknown notification: %s" % repr(notification[1]))
+            else:
+                notification_handler[notification[1].upper()](serversock, notification[2:])
+        
         if input == "": continue
         #if input[0] != '/':
         #    print("Cara, soh tem comandos com / agora.")
@@ -103,9 +137,13 @@ try:
         except ExitMessage:
             chat_running = False
         except ListenMessage, listen_data:
-            listensock.sock.settimeout(10)
-            p2psocket = listensock.accept()
-            p2psocket.close()
+            try:
+                listensock.sock.settimeout(10)
+                p2psocket = common.VerboseSocket(listensock.accept()[0], "P")
+                print(p2psocket.receive())
+                p2psocket.close()
+            except socket.timeout:
+                print("Chat request refused.")
         
     serversock.close()
     listensock.close()
