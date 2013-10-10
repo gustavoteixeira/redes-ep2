@@ -102,7 +102,7 @@ class ClientThread(threading.Thread):
 
     def run(self):
         self.socket.sock.settimeout(HEARTBEAT_INTERVAL)
-        print("[+] New thread started for %s:%s" % (self.ip, self.port))
+        self.socket.debug("Thread Run")
         try:
             while self.running:
                 (readvalid, writevalid, errorvalid) = select.select([self.socket], [self.socket], [], 5)
@@ -128,7 +128,7 @@ class ClientThread(threading.Thread):
                     self.socket.send("UNKNOWN_COMMAND\n")
                     
                 elif command not in ClientThread.permission_checker:
-                    print("[ERROR] Valid command without permission checker")
+                    self.socket.debug("Valid command without permission checker")
                     self.socket.send("INTERNAL_ERROR\n")
                     
                 elif not ClientThread.permission_checker[command](self):
@@ -138,11 +138,14 @@ class ClientThread(threading.Thread):
                     ClientThread.commands[command](self, arguments)
                 
         except Exception, e:
-            print("[+] Thread for %s:%s crashed! Reason: %s" % (self.ip, self.port, e))
+            self.socket.debug("Thread crash! Reason: " + str(e))
+        except common.SocketUnexpectedClosed:
+            self.socket.debug("Thread closed unexpectedly.")
+            
         if self.username:
             del users[self.username]
         self.socket.close()
-        print("[+] Thread for %s:%s finished" % (self.ip, self.port))
+        self.socket.debug("Thread finished.")
     
     
     def permissionchecker_islogged(self):
