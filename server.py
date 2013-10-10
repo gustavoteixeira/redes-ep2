@@ -1,4 +1,5 @@
 import socket, ssl, sys, threading, select
+import common
 
 server_running = True
 HEARTBEAT_INTERVAL = None
@@ -9,7 +10,9 @@ class ClientThread(threading.Thread):
         threading.Thread.__init__(self)
         self.ip = ip
         self.port = port
-        self.socket = socket
+        
+        self.socket = common.VerboseSocket(socket, "C " + str(self.ip) + ":" + str(self.port))
+        
         self.running = True
         self.username = None
         self.in_chat = None
@@ -18,7 +21,7 @@ class ClientThread(threading.Thread):
         
     def fetch_messages(self):
         try:
-            data = self.socket.recv(2048)
+            data = self.socket.receive()
         except socket.timeout:
             return False
         if len(data) == 0:
@@ -99,12 +102,13 @@ class ClientThread(threading.Thread):
         self.socket.send("BYE\n")
 
     def run(self):
+        self.socket.sock.settimeout(HEARTBEAT_INTERVAL)
         print("[+] New thread started for %s:%s" % (self.ip, self.port))
         try:
             while self.running:
                 (readvalid, writevalid, errorvalid) = select.select([self.socket], [self.socket], [], 5)
                 
-                if self.socket is in writevalid:
+                if self.socket in writevalid:
                     while self.notifications:
                         self.socket.send("NOTIFICATION " + self.notifications.pop() + "\n")
                         
@@ -116,19 +120,24 @@ class ClientThread(threading.Thread):
                     self.running = False
                     break
                 result = message.split(' ', 1)
-                command = result[0]
                 arguments = ""
                 if len(result) > 1: arguments = result[1]
-                command = command.upper()
+                
+                command = result[0].upper()
+                
                 if command not in ClientThread.commands:
                     self.socket.send("UNKNOWN_COMMAND\n")
+                    
                 elif command not in ClientThread.permission_checker:
                     print("[ERROR] Valid command without permission checker")
                     self.socket.send("INTERNAL_ERROR\n")
+                    
                 elif not ClientThread.permission_checker[command](self):
                     self.socket.send("PERMISSION_DENIED\n")
+                    
                 else:
                     ClientThread.commands[command](self, arguments)
+                
         except Exception, e:
             print("[+] Thread for %s:%s crashed! Reason: %s" % (self.ip, self.port, e))
         if self.username:
@@ -163,7 +172,6 @@ class ClientThread(threading.Thread):
         'LOGOUT': command_logout
     }
 
-
 server_listen_port = int(sys.argv[1])
 tcp = True
 if len(sys.argv) > 2:
@@ -177,15 +185,12 @@ if len(sys.argv) > 2:
 if not tcp:
     raise Exception("UDP NYI")
     
-serversock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-serversock.bind(("0.0.0.0", server_listen_port))
-serversock.listen(0)
+listensock = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "L")
+listensock.bind(("0.0.0.0", server_listen_port))
+listensock.listen(2)
 
 while server_running:
-    print("== WAITING FOR CLIENT! ==")
-    (clientsock, (ip, port)) = serversock.accept()
-    clientsock.settimeout(HEARTBEAT_INTERVAL)
-    newthread = ClientThread(ip, port, clientsock)
-    newthread.start()
+    (clientsock, (ip, port)) = listensock.accept()
+    ClientThread(ip, port, clientsock).start()
 
-serversock.close()
+listensock.close()

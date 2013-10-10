@@ -1,5 +1,7 @@
 ﻿import socket, sys, re
 
+import common
+
 host = sys.argv[1]
 port = int(sys.argv[2])
 tcp = True
@@ -14,51 +16,12 @@ if len(sys.argv) > 3:
 if not tcp:
     raise Exception("UDP NYI")
     
-class SocketUnexpectedClosed:
-    pass
 
-class VerboseSocket:
-    def __init__(self, sock, name):
-        self.sock = sock
-        self.name = name
-        
-    def send(self, arg):
-        self.sock.send(arg)
-        print("[>%s] %s" % (self.name, repr(arg)))
-    
-    def receive(self):
-        data = self.sock.recv(2048)
-        if len(data) == 0:
-            raise SocketUnexpectedClosed()
-        print("[<%s] %s" % (self.name, repr(data)))
-        return data
-        
-    def connect(self, target):
-        print("[ %s] Connecting to %s:%s" % (self.name, target[0], target[1]))
-        self.sock.connect(target)
-        print("[ %s] Connected!" % (self.name))
-        
-    def bind(self, target):
-        self.sock.bind(target)
-        addr = self.sock.getsockname()
-        print("[ %s] Bound to %s:%s" % (self.name, addr[0], addr[1]))
-        
-    def close(self):
-        self.sock.close()
-        print("[ %s] Closed!" % (self.name))
-    
-    def accept(self):
-        print("[ %s] Waiting for a client!" % (self.name))
-        client = self.sock.accept()
-        print("[ %s] A client connected! Remote is %s" % (self.name, client.getpeername()))
-        return client
-
-
-listensock = VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "L")
+listensock = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "L")
 listensock.bind(("0.0.0.0", 0))
-listensock.sock.listen(0)
+listensock.listen(0)
 
-serversock = VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "S")
+serversock = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "S")
 serversock.connect((host, port))
 
 class ExitMessage: pass
@@ -146,5 +109,5 @@ try:
         
     serversock.close()
     listensock.close()
-except SocketUnexpectedClosed:
+except common.SocketUnexpectedClosed:
     print("Lost connection to server.")
