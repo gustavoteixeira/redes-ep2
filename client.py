@@ -1,4 +1,5 @@
-﻿import socket, sys, re, select
+﻿from __future__ import print_function
+import socket, sys, re, select, readline, thread
 
 import common
 
@@ -15,7 +16,25 @@ if len(sys.argv) > 3:
         
 if not tcp:
     raise Exception("UDP NYI")
+
+CHAT_PROMPT = "> "
+RUNNING_RAWINPUT = False
     
+def print_threaded(message):
+    if not RUNNING_RAWINPUT:
+        print(message)
+        return
+    sys.stdout.write('\r'+' '*(len(readline.get_line_buffer())+2)+'\r')
+    print(message)
+    sys.stdout.write(CHAT_PROMPT + readline.get_line_buffer())
+    sys.stdout.flush()
+
+def raw_input_wrapper(prompt):
+    global RUNNING_RAWINPUT
+    RUNNING_RAWINPUT = True
+    resp = raw_input(prompt)
+    RUNNING_RAWINPUT = False
+    return resp
 
 listensock = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "L")
 listensock.bind(("0.0.0.0", 0))
@@ -66,10 +85,13 @@ commands = {
 }
 
 def notification_chatrequest(server, args):
+    print_threaded("CHAT REQUEST!!")
+    return
+
     target_user = args[0]
     accept = False
     while True:
-        resp = raw_input("Chat request from '%s', accept? (y/n)" % target_user).lower()
+        resp = raw_input("Chat request from '%s', accept? (y/n) " % target_user).lower()
         if resp == 'y' or resp == 'n':
             accept = (resp == 'y')
             break
@@ -84,9 +106,22 @@ def notification_chatrequest(server, args):
     p2psock.send("nope.avi\n")
     p2psock.close()
 
-notification_handler = {
+notification_handlers = {
     'CHATREQUEST': notification_chatrequest
 }
+
+def notification_handler():
+    while True:
+        (readvalid, _, _) = select.select([serversock], [], [], 0.01)
+        if not RUNNING_RAWINPUT: return
+        if serversock in readvalid:
+            notification = serversock.receive().strip().split(' ')
+            if notification[0].upper() != "NOTIFICATION":
+                print_threaded("Unexpected message from server: %s" % repr(notification))
+            elif notification[1].upper() not in notification_handlers:
+                print_threaded("Unknown notification: %s" % repr(notification[1]))
+            else:
+                notification_handlers[notification[1].upper()](serversock, notification[2:])
 
 try:
     your_username = None
@@ -110,17 +145,8 @@ try:
     
     chat_running = True
     while chat_running:
-        input = raw_input("> ").strip()
-        
-        (readvalid, _, _) = select.select([serversock], [], [], 0.01)
-        if serversock in readvalid:
-            notification = serversock.receive().strip().split(' ')
-            if notification[0].upper() != "NOTIFICATION":
-                print("Unexpected message from server: %s" % repr(notification))
-            elif notification[1].upper() not in notification_handler:
-                print("Unknown notification: %s" % repr(notification[1]))
-            else:
-                notification_handler[notification[1].upper()](serversock, notification[2:])
+        notification_thread = thread.start_new_thread(notification_handler, ())
+        input = raw_input_wrapper(CHAT_PROMPT).strip()
         
         if input == "": continue
         #if input[0] != '/':
