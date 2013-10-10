@@ -1,5 +1,4 @@
-from socket import *
-import socket, ssl, sys, threading
+import socket, ssl, sys, threading, select
 
 server_running = True
 HEARTBEAT_INTERVAL = None
@@ -103,9 +102,14 @@ class ClientThread(threading.Thread):
         print("[+] New thread started for %s:%s" % (self.ip, self.port))
         try:
             while self.running:
-            
-                while self.notifications:
-                    self.socket.send("NOTIFICATION " + self.notifications.pop() + "\n")
+                (readvalid, writevalid, errorvalid) = select.select([self.socket], [self.socket], [], 5)
+                
+                if self.socket is in writevalid:
+                    while self.notifications:
+                        self.socket.send("NOTIFICATION " + self.notifications.pop() + "\n")
+                        
+                if self.socket not in readvalid and not self.buffer:
+                    continue
             
                 message = self.get_message()
                 if not message:
