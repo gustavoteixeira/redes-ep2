@@ -91,6 +91,7 @@ def run(config):
     while server_running:
         if sock in select.select([sock], [], [], 5)[0]:
             (data, address) = sock.recvfrom()
+            if not data or not address: continue
             for line in data.splitlines():
                 command = line.split(' ')
                 

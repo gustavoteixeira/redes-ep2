@@ -165,8 +165,14 @@ class SocketMaster(threading.Thread):
         client_common.CHAT_PROMPT = your_username + ": "
         
     def run(self):
+        last_beat = time.time()
         while chat_running:
             (readcheck, writecheck, _) = select.select([self.socket], [self.socket], [], configuration.heartbeat / 10)
+            
+            if time.time() - last_beat > configuration.heartbeat:
+                self.queue_write("HEARTBEAT\n", server_address)
+                self.add_handler(lambda data: data == "OK\n")
+                last_beat = time.time()
             
             if self.socket in readcheck:
                 (data, address) = self.socket.recvfrom()

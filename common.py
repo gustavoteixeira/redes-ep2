@@ -11,9 +11,12 @@ class VerboseSocket:
         self.print_func = print_func
         
     def recvfrom(self):
-        data = self.sock.recvfrom(2048)
-        self.debug(repr(data), '<')
-        return data
+        try:
+            data = self.sock.recvfrom(2048)
+            self.debug(repr(data), '<')
+            return data
+        except socket.error:
+            return (None, None)
         
     def sendto(self, data, address):
         self.sock.sendto(data, address)
