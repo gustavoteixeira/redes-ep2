@@ -250,15 +250,19 @@ try:
         try:
             input = raw_input_wrapper(CHAT_PROMPT).strip()
         except EOFError:
-            print("exit")
-            input = "exit"
+            input = "/exit" if listen.is_chatting() else "exit"
+            print(input)
+        
         if input == "": continue
         
         if listen.is_chatting():
             if input[0] != '/':
                 input = "say " + input
-            else:
-                input = input[1:]
+            elif input[0:2] == "//":
+                input = "say " + input[1:]
+                
+        if input[0] == '/':
+            input = input[1:]
         
         command = input.split(' ')
         if command[0].lower() not in commands:
