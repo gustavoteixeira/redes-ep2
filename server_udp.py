@@ -22,14 +22,15 @@ def command_login(sock, address, args):
         
         if username in users:
             sock.sendto("USER_ALREADY_EXISTS\n", address)
-            continue
+            return
             
     except (ValueError, IndexError):
         sock.sendto("INPUT_ERROR\n", address)
-        continue
+        return
         
     ip_username[address] = username
     users[username] = [address, listen, time.time()]
+    sock.sendto("WELCOME\n", address)
     
 def command_heartbeat(sock, address, args):
     if address not in ip_username: 
@@ -72,16 +73,16 @@ def run(config):
     sock.bind(("0.0.0.0", configuration.port))
     
     while server_running:
-        (data, address) = sock.recvfrom()
-        
-        for line in data.splitlines():
-            command = line.split(' ')
-            
-            if ('command_' + command[0].lower()) in globals():
-                globals()('command_' + command[0].lower())(sock, address, command[1:])
+        if sock in select.select([sock], [], [], 5)[0]:
+            (data, address) = sock.recvfrom()
+            for line in data.splitlines():
+                command = line.split(' ')
                 
-            if address in ip_username:
-                ip_username[address][2] = time.time()
+                if ('command_' + command[0].lower()) in globals():
+                    globals()['command_' + command[0].lower()](sock, address, command[1:])
+                    
+                if address in ip_username:
+                    users[ip_username[address]][2] = time.time()
             
         starttime = time.time()
         for user in users:
