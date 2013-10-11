@@ -1,5 +1,5 @@
 ﻿from __future__ import print_function
-import socket, sys, re, select, readline, thread
+import socket, sys, re, select, readline, threading
 
 import common, args
 
@@ -12,11 +12,10 @@ CHAT_PROMPT = "> "
 # Globals
 chat_running = True
 rawinput_running = False
-listensock = None
+listen = None
 serversock = None
 commands = {}
-pending_chatrequests = {}
-chatting = None
+your_username = None
     
 def print_threaded(message):
     if not rawinput_running:
@@ -41,18 +40,14 @@ def read_validusername():
             return username
         print("Invalid username. Valid is ^[a-zA-Z]+$")
     
-class ServerCommunication(common.VerboseSocket):
-    def __init__(self, socket):
-        common.VerboseSocket.__init__(self, socket, "S")
+class Communication(common.VerboseSocket):
+    def __init__(self, socket, name):
+        common.VerboseSocket.__init__(self, socket, name)
         self.messages = []
-        self.notifications = []
     
     def read_socket(self):
         for line in self.receive().splitlines():
-            if line.split(' ', 1)[0].upper() == 'NOTIFICATION':
-                self.notifications.insert(0, line.split(' ', 1)[1])
-            else:
-                self.messages.insert(0, line)
+            self.messages.insert(0, line)
                 
     def peek_socket(self):
         (readvalid, _, _) = select.select([self], [], [], 0.01)
@@ -64,21 +59,16 @@ class ServerCommunication(common.VerboseSocket):
             self.read_socket()
         return self.messages.pop()
         
-    def get_notification(self):
-        self.peek_socket()
-        if self.notifications:
-            return self.notifications.pop()
-        return None
+    def send_message(self, message):
+        self.send(message + "\n")
     
-listensock = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "L")
-listensock.bind(("0.0.0.0", 0))
-listensock.listen(0)
-
-serversock = ServerCommunication(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+serversock = Communication(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "S")
 serversock.connect((host, port))
 
 class ExitMessage: pass
-class ListenMessage: pass
+class StartChatMessage:
+    def __init__(self, target_user):
+        self.target_user = target_user
 
 def command_users(server, args):
     server.send("LISTUSERS\n")
@@ -88,39 +78,36 @@ def command_users(server, args):
         print(">> %s" % user)
         
 def command_chat(server, args):
-    try:
-        target_user = args[0]
-    except IndexError:
+    if len(args) != 1:
         print("Correct usage: 'chat USER'")
         return
-    server.send("REQUESTCHAT %s\n" % target_user)
+    target_user = args[0]
+    server.send_message("ISBUSY %s" % target_user)
     response = server.get_message()
     if response == "UNKNOWN_USER":
         print("User '%s' is not logged in." % target_user)
         return
-    elif response == "USER_IS_BUSY":
+    elif response == "IS_BUSY":
         print("User '%s' is busy." % target_user)
         return
-    elif response != "OK":
+    elif response != "IS_FREE":
         print("Internal server error.")
         return
     else:
-        raise ListenMessage()
+        raise StartChatMessage(target_user)
 
 def command_accept(server, args):
     target_user = args[0]
-    if target_user not in pending_chatrequests:
+    if target_user not in listen.pending:
         print("User '%s' has not requested a chat with you. Use 'chat %s' instead." % (target_user, target_user))
         return
         
-    serversock.send("QUERYUSERINFO %s\n" % target_user)
-    (target_ip, target_port) = serversock.get_message().split(' ')
+    socket = listen.pending[target_user]
+    socket.send_message("OK")
     
-    global chatting
-    chatting = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "P")
-    chatting.connect((target_ip, int(target_port)))
-    chatting.send("nope.avi\n")
     print("You are now chatting with '%s'!" % target_user)
+    listen.chatting = (target_user, socket)
+    del listen.pending[target_user]
     
 def command_help(server, args):
     print("The following commands are avaiable: " + reduce(lambda a, b: a + ", " + b, commands))
@@ -139,34 +126,48 @@ commands = {
     'exit': command_exit
 }
 
-def notification_chatrequest(server, args):
-    target_user = args[0]
-    print_threaded("You received a chat request from '%s'. If you accept, run 'accept %s'." % (target_user, target_user))
-    pending_chatrequests[target_user] = True
-
-notification_handlers = {
-    'CHATREQUEST': notification_chatrequest
-}
-
-def notification_handler():
-    while chat_running:
-        notification = serversock.get_notification()
-        if not notification:
-            continue
+class ClientListener(threading.Thread):
+    def __init__(self, socket):
+        threading.Thread.__init__(self)
+        self.socket = common.VerboseSocket(socket, "L")
+        self.socket.bind(("0.0.0.0", 0))
+        self.socket.listen(2)
+        self.chatting = None
+        self.pending = {}
         
-        notification = notification.split(' ')
-        if notification[0].upper() not in notification_handlers:
-            print_threaded("Unknown notification: %s" % repr(notification[1]))
+    def get_port(self):
+        return self.socket.sock.getsockname()[1]
+        
+    def handle_newrequest(self, socket):
+        request = socket.get_message().split(' ')
+        if len(request) == 2 and request[0] == "CHATREQUEST":
+            username = request[1]
+            self.pending[username] = socket
+            print_threaded("You received a chat request from '%s'. If you accept, run 'accept %s'." % (username, username))
+            return
         else:
-            notification_handlers[notification[0].upper()](serversock, notification[1:])
+            # invalid request
+            socket.close()
+        
+    def is_chatting(self):
+        return self.chatting
+        
+    def run(self):
+        while chat_running:
+            ready = select.select([self.socket], [], [], 1)[0]
+            if self.socket in ready:
+                continue
+            self.handle_newrequest(Communication(self.socket.accept()[0], 'P'))
+        self.socket.close()
 
 try:
-    your_username = None
+    listen = ClientListener(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+    listen.start()
     
     # Login Process
     while True:
         your_username = read_validusername()
-        serversock.send("LOGIN %s %s\n" % (your_username, listensock.sock.getsockname()[1]))
+        serversock.send("LOGIN %s %s\n" % (your_username, listen.get_port()))
         
         response = serversock.receive()
         if response == "USER_ALREADY_EXISTS\n":
@@ -177,30 +178,51 @@ try:
             print("Welcome, %s!" % your_username)
             break
     
-    notification_thread = thread.start_new_thread(notification_handler, ())
     while chat_running:
         input = raw_input_wrapper(CHAT_PROMPT).strip()
         if input == "": continue
         
-        if chatting and input[0] != '/':
-            chatting.send("SAY %s\n" % input)
-        else:
-            if chatting: input = input[1:]
-            command = input.split(' ')
-            if command[0].lower() not in commands:
-                print("Unknown command: %s" % command[0].lower())
+        if listen.is_chatting() and input[0] != '/':
+            listen.chatting[1].send("SAY %s\n" % input)
+            continue
+        
+        if listen.is_chatting(): input = input[1:]
+        command = input.split(' ')
+        if command[0].lower() not in commands:
+            print("Unknown command: %s" % command[0].lower())
+            continue
+        
+        try:
+            commands[command[0].lower()](serversock, command[1:])
+        except StartChatMessage, chat_data:
+            if listen.is_chatting():
+                print("You can chat with only one person each time.")
+                continue
+            if chat_data.target_user == your_username:
+                print("You can't chat with yourself.")
                 continue
             
-            try:
-                commands[command[0].lower()](serversock, command[1:])
-            except ListenMessage, listen_data:
-                try:
-                    listensock.sock.settimeout(10)
-                    chatting = common.VerboseSocket(listensock.accept()[0], "P")
-                except socket.timeout:
-                    print("Chat request refused.")
+            serversock.send_message("QUERYUSERINFO %s" % chat_data.target_user)
+            peerdata = serversock.get_message().split(' ')
+            peerdata[1] = int(peerdata[1])
+            
+            peer = Communication(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "P")
+            peer.sock.settimeout(30)
+            peer.connect((peerdata[0], peerdata[1]))
+            peer.send_message("CHATREQUEST " + your_username)
+            if peer.get_message() == "OK":
+                listen.chatting = (chat_data.target_user, peer)
+                print("User '%s' accepted your chat request" % chat_data.target_user)
+            else:
+                print("User '%s' refused your chat request" % chat_data.target_user)
+                peer.close()
         
     serversock.close()
-    listensock.close()
+    
 except common.SocketUnexpectedClosed:
+    chat_running = False
     print("Lost connection to server.")
+except Exeception, err:
+    chat_running = False
+    print("Unexpected python exception: " + err)
+    

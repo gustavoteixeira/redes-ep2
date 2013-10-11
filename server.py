@@ -15,7 +15,6 @@ class ClientThread(threading.Thread):
         self.username = None
         self.in_chat = None
         self.buffer = []
-        self.notifications = []
         
     def fetch_messages(self):
         try:
@@ -62,17 +61,16 @@ class ClientThread(threading.Thread):
     def command_listusers(self, args):
         self.socket.send(reduce(lambda a, b: a + " " + b, users) + "\n")
         
-    def command_requestchat(self, target_user):
+    def command_isbusy(self, target_user):
         if target_user not in users:
             self.socket.send("UNKNOWN_USER\n")
             return
             
         if users[target_user].in_chat:
-            self.socket.send("USER_IS_BUSY\n")
+            self.socket.send("IS_BUSY\n")
             return
             
-        users[target_user].notifications.insert(0, "CHATREQUEST " + self.username)
-        self.socket.send("OK\n")
+        self.socket.send("IS_FREE\n")
     
     def command_enterchat(self, target_user):
         self.in_chat = target_user
@@ -103,11 +101,7 @@ class ClientThread(threading.Thread):
         self.socket.debug("Thread Run")
         try:
             while self.running:
-                (readvalid, writevalid, errorvalid) = select.select([self.socket], [self.socket], [], 5)
-                
-                if self.socket in writevalid:
-                    while self.notifications:
-                        self.socket.send("NOTIFICATION " + self.notifications.pop() + "\n")
+                (readvalid, _, _) = select.select([self.socket], [], [], 5)
                         
                 if self.socket not in readvalid and not self.buffer:
                     continue
@@ -154,7 +148,7 @@ class ClientThread(threading.Thread):
         'HEARTBEAT': permissionchecker_islogged,
         'LISTUSERS': permissionchecker_islogged,
         'KILLSERVER': permissionchecker_islogged,
-        'REQUESTCHAT': permissionchecker_islogged,
+        'ISBUSY': permissionchecker_islogged,
         'ENTERCHAT': permissionchecker_islogged,
         'LEAVECHAT': permissionchecker_islogged,
         'QUERYUSERINFO': permissionchecker_islogged,
@@ -165,7 +159,7 @@ class ClientThread(threading.Thread):
         'HEARTBEAT': command_heartbeat,
         'LISTUSERS': command_listusers,
         'KILLSERVER': command_killserver,
-        'REQUESTCHAT': command_requestchat,
+        'ISBUSY': command_isbusy,
         'ENTERCHAT': command_enterchat,
         'LEAVECHAT': command_leavechat,
         'QUERYUSERINFO': command_queryuserinfo,
