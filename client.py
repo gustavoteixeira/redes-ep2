@@ -36,11 +36,40 @@ def raw_input_wrapper(prompt):
     RUNNING_RAWINPUT = False
     return resp
 
+class ServerCommunication(common.VerboseSocket):
+    def __init__(self, socket):
+        common.VerboseSocket.__init__(self, socket, "S")
+        self.messages = []
+        self.notifications = []
+    
+    def read_socket(self):
+        for line in self.receive().splitlines():
+            if line.split(' ', 1)[0].upper() == 'NOTIFICATION':
+                self.notifications.insert(0, line.split(' ', 1)[1])
+            else:
+                self.messages.insert(0, line)
+                
+    def peek_socket(self):
+        (readvalid, _, _) = select.select([self], [], [], 0.01)
+        if self in readvalid:
+            self.read_socket()
+    
+    def get_message(self):
+        while not self.messages:
+            self.read_socket()
+        return self.messages.pop()
+        
+    def get_notification(self):
+        self.peek_socket()
+        if self.notifications:
+            return self.notifications.pop()
+        return None
+    
 listensock = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "L")
 listensock.bind(("0.0.0.0", 0))
 listensock.listen(0)
 
-serversock = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "S")
+serversock = ServerCommunication(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
 serversock.connect((host, port))
 
 class ExitMessage: pass
@@ -48,7 +77,7 @@ class ListenMessage: pass
 
 def command_users(server, args):
     server.send("LISTUSERS\n")
-    userlist = server.receive().strip().split(' ')
+    userlist = server.get_message().split(' ')
     print("Users:")
     for user in userlist:
         print(">> %s" % user)
@@ -60,14 +89,14 @@ def command_chat(server, args):
         print("Correct usage: 'chat USER'")
         return
     server.send("REQUESTCHAT %s\n" % target_user)
-    response = server.receive()
-    if response == "UNKNOWN_USER\n":
+    response = server.get_message()
+    if response == "UNKNOWN_USER":
         print("User '%s' is not logged in." % target_user)
         return
-    elif response == "USER_IS_BUSY\n":
+    elif response == "USER_IS_BUSY":
         print("User '%s' is busy." % target_user)
         return
-    elif response != "OK\n":
+    elif response != "OK":
         print("Internal server error.")
         return
     else:
@@ -75,7 +104,7 @@ def command_chat(server, args):
 
 def command_exit(server, args):
     server.send("LOGOUT\n")
-    server.receive()
+    server.get_message()
     raise ExitMessage()
     
 commands = {
