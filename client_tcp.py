@@ -1,40 +1,19 @@
 ﻿from __future__ import print_function
 import socket, sys, re, select, readline, threading
-import common
+import common, client_common
 
 # Globals
 configuration = None
-CHAT_PROMPT = "> "
-rawinput_running = False
 
 chat_running = True
 listen = None
 commands = {}
 your_username = None
+
+print_threaded = client_common.print_threaded
+raw_input_wrapper = client_common.raw_input_wrapper
+read_validusername = client_common.read_validusername
     
-def print_threaded(message):
-    if not rawinput_running:
-        print(message)
-        return
-    sys.stdout.write('\r'+' '*(len(readline.get_line_buffer())+2)+'\r')
-    print(message)
-    sys.stdout.write(CHAT_PROMPT + readline.get_line_buffer())
-    sys.stdout.flush()
-
-def raw_input_wrapper(prompt):
-    global rawinput_running
-    rawinput_running = True
-    resp = raw_input(prompt)
-    rawinput_running = False
-    return resp
-
-def read_validusername():
-    while True:
-        username = raw_input("Username: ")
-        if re.match("^[a-zA-Z]+$", username):
-            return username
-        print("Invalid username. Valid is ^[a-zA-Z]+$")
-
 # COMMANDS
 def command_say(server, args):
     if listen.is_chatting():
@@ -162,8 +141,7 @@ class ClientListener(threading.Thread):
     def stop_chatting(self, forced = False):
         if not self.chatting: return
         
-        global CHAT_PROMPT
-        CHAT_PROMPT = "> "
+        client_common.CHAT_PROMPT = "> "
         
         if not forced:
             self.chatting[1].send_message("CLOSE")
@@ -176,8 +154,7 @@ class ClientListener(threading.Thread):
         
     def set_chatting(self, username, socket):
         self.chatting = (username, socket)
-        global CHAT_PROMPT
-        CHAT_PROMPT = your_username + ": "
+        client_common.CHAT_PROMPT = your_username + ": "
         
     def handle_newrequest(self, socket):
         socket.print_func = print_threaded if configuration.verbosity >= 2 else common.null_print
@@ -248,7 +225,7 @@ def run(config):
         
         while chat_running:
             try:
-                input = raw_input_wrapper(CHAT_PROMPT).strip()
+                input = raw_input_wrapper(client_common.CHAT_PROMPT).strip()
             except EOFError:
                 input = "/exit" if listen.is_chatting() else "exit"
                 print(input)
