@@ -1,5 +1,5 @@
 ﻿from __future__ import print_function
-import socket, sys, re, select, readline, threading
+import socket, sys, re, select, readline, threading, time
 import common, client_common
 
 # Globals
@@ -41,8 +41,8 @@ def command_users(master, args):
         for user in userlist:
             print_threaded(">> %s" % user)
 
-    master.queue_write("LISTUSERS\n", server_address)
     server_handler.add_handler(users_print)
+    master.queue_write("LISTUSERS\n", server_address)
 
 def command_chat(master, args):
     pass
@@ -60,7 +60,11 @@ def command_help(master, args):
     print("The following commands are avaiable: " + reduce(lambda a, b: a + ", " + b, commands))
     
 def command_exit(master, args):
-    pass
+    server_handler.add_handler(lambda data: data == "BYE\n")
+    master.queue_write("LOGOUT\n", server_address)
+    time.sleep(1)
+    global chat_running
+    chat_running = False
     
 commands = {
     'say': command_say,

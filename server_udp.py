@@ -85,8 +85,8 @@ def run(config):
                     users[ip_username[address]][2] = time.time()
             
         starttime = time.time()
-        for user in users:
-            if users[user][2] - starttime > configuration.timeout:
+        for user in list(users.keys()):
+            if starttime - users[user][2] > configuration.timeout:
                 print("Killing '%s' from lack of heartbeat." % user)
                 del ip_username[users[user][0]]
                 del users[user]
