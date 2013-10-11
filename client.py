@@ -123,6 +123,12 @@ def command_refuse(server, args):
     socket.close()
     del listen.pending[target_user]
     print("Chat request from '%s' refused." % target_user)
+
+def command_close(server, args):
+    if listen.is_chatting():
+        listen.stop_chatting()
+    else:
+        print("You're not chatting with anyone.")
     
 def command_help(server, args):
     print("The following commands are avaiable: " + reduce(lambda a, b: a + ", " + b, commands))
@@ -139,6 +145,7 @@ commands = {
     'chat': command_chat,
     'accept': command_accept,
     'refuse': command_refuse,
+    'close': command_close,
     'help': command_help,
     'exit': command_exit
 }
