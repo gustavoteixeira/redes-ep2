@@ -224,28 +224,7 @@ def run(config):
                 break
         
         while chat_running:
-            try:
-                input = raw_input_wrapper(client_common.CHAT_PROMPT).strip()
-            except EOFError:
-                input = "/exit" if listen.is_chatting() else "exit"
-                print(input)
-            
-            if input == "": continue
-            
-            if listen.is_chatting():
-                if input[0] != '/':
-                    input = "say " + input
-                elif input[0:2] == "//":
-                    input = "say " + input[1:]
-                    
-            if input[0] == '/':
-                input = input[1:]
-            
-            command = input.split(' ')
-            if command[0].lower() not in commands:
-                print("Unknown command: '%s'" % command[0].lower())
-                continue
-            commands[command[0].lower()](serversock, command[1:])
+            client_common.input_handler(listen.is_chatting, commands, serversock)
             
         print("Bye.")
         serversock.close()

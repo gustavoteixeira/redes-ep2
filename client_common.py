@@ -29,3 +29,28 @@ def read_validusername():
             return username
         print("Invalid username. Valid is ^[a-zA-Z]+$")
         
+def input_handler(is_chatting, commands, data):
+    try:
+        input = raw_input_wrapper(CHAT_PROMPT).strip()
+    except EOFError:
+        input = "/exit" if is_chatting() else "exit"
+        print(input)
+    
+    if input == "":
+        return
+    
+    if is_chatting():
+        if input[0] != '/':
+            input = "say " + input
+        elif input[0:2] == "//":
+            input = "say " + input[1:]
+            
+    if input[0] == '/':
+        input = input[1:]
+    
+    command = input.split(' ')
+    if command[0].lower() not in commands:
+        print("Unknown command: '%s'" % command[0].lower())
+        return
+    commands[command[0].lower()](data, command[1:])
+        
