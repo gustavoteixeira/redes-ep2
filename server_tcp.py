@@ -3,7 +3,6 @@ import socket, ssl, sys, threading, select
 import common
 
 server_running = True
-HEARTBEAT_INTERVAL = None
 users = {}
 configuration = None
 
@@ -43,7 +42,7 @@ class ClientThread(threading.Thread):
         try:
             (try_username, listen_port) = args.split(' ', 1)
             listen_port = int(listen_port)
-        except ValueError:
+        except (ValueError, IndexError):
             self.socket.send("INPUT_ERROR\n")
             return
             
@@ -75,15 +74,10 @@ class ClientThread(threading.Thread):
         self.socket.send("BYE\n")
 
     def run(self):
-        self.socket.sock.settimeout(HEARTBEAT_INTERVAL)
+        self.socket.sock.settimeout(configuration.timeout)
         self.socket.debug("Thread Run")
         try:
-            while self.running:
-                (readvalid, _, _) = select.select([self.socket], [], [], 5)
-                        
-                if self.socket not in readvalid and not self.buffer:
-                    continue
-            
+            while self.running:            
                 message = self.get_message()
                 if not message:
                     self.running = False
