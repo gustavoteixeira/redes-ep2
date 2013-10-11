@@ -50,3 +50,28 @@ class VerboseSocket:
         
     def debug(self, message, style = ' '):
         self.print_func("[%s%s] %s" % (style, self.name, message))
+        
+class Communication(VerboseSocket):
+    def __init__(self, socket, name):
+        VerboseSocket.__init__(self, socket, name)
+        self.messages = []
+    
+    def read_socket(self):
+        for line in self.receive().splitlines():
+            self.messages.insert(0, line)
+                
+    def peek_socket(self):
+        (readvalid, _, _) = select.select([self], [], [], 0.01)
+        if self in readvalid:
+            self.read_socket()
+    
+    def get_message(self):
+        while not self.messages:
+            self.read_socket()
+        return self.messages.pop()
+        
+    def send_message(self, message):
+        self.send(message + "\n")
+        
+def null_print(message):
+    pass

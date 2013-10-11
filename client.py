@@ -15,6 +15,7 @@ rawinput_running = False
 listen = None
 commands = {}
 your_username = None
+debug_level = 1 # 0 = nothing, 1 = server/listen socket, 2+ = all sockets
     
 def print_threaded(message):
     if not rawinput_running:
@@ -38,29 +39,13 @@ def read_validusername():
         if re.match("^[a-zA-Z]+$", username):
             return username
         print("Invalid username. Valid is ^[a-zA-Z]+$")
-    
-class Communication(common.VerboseSocket):
-    def __init__(self, socket, name):
-        common.VerboseSocket.__init__(self, socket, name)
-        self.messages = []
-    
-    def read_socket(self):
-        for line in self.receive().splitlines():
-            self.messages.insert(0, line)
-                
-    def peek_socket(self):
-        (readvalid, _, _) = select.select([self], [], [], 0.01)
-        if self in readvalid:
-            self.read_socket()
-    
-    def get_message(self):
-        while not self.messages:
-            self.read_socket()
-        return self.messages.pop()
-        
-    def send_message(self, message):
-        self.send(message + "\n")
-    
+      
+def command_say(server, args):
+    if listen.is_chatting():
+       listen.chatting[1].send("SAY %s\n" % (" ".join(args)))
+    else:
+        print("You're not chatting with anyone.")
+      
 def command_users(server, args):
     server.send("LISTUSERS\n")
     userlist = server.get_message().split(' ')
@@ -98,7 +83,8 @@ def command_chat(server, args):
         print("Server sent bad data.")
         return
         
-    peer = Communication(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "P")
+    peer = common.Communication(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "P")
+    peer.print_func = print_threaded if debug_level >= 2 else common.null_print
     peer.sock.settimeout(30)
     peer.connect((userdata[0], userdata[1]))
     peer.send_message("CHATREQUEST " + your_username)
@@ -148,6 +134,7 @@ def command_exit(server, args):
     chat_running = False
     
 commands = {
+    'say': command_say,
     'users': command_users,
     'chat': command_chat,
     'accept': command_accept,
@@ -164,15 +151,31 @@ class ClientListener(threading.Thread):
         self.socket.listen(2)
         self.chatting = None
         self.pending = {}
+        self.socket.print_func = print_threaded if debug_level >= 1 else common.null_print
         
     def get_port(self):
         return self.socket.sock.getsockname()[1]
         
+    def stop_chatting(self, forced = False):
+        if not self.chatting: return
+        
+        if not forced:
+            self.chatting[1].send_message("CLOSE")
+    
+        global CHAT_PROMPT
+        CHAT_PROMPT = "> "
+        print_threaded("Your chat with '%s' has ended." % self.chatting[0])
+        
+        self.chatting[1].close()
+        self.chatting = None
+        
     def set_chatting(self, username, socket):
         self.chatting = (username, socket)
-        socket.print_func = print_threaded
+        global CHAT_PROMPT
+        CHAT_PROMPT = your_username + ": "
         
     def handle_newrequest(self, socket):
+        socket.print_func = print_threaded if debug_level >= 2 else common.null_print
         request = socket.get_message().split(' ')
         if len(request) == 2 and request[0] == "CHATREQUEST":
             if self.chatting: #single chat only
@@ -196,17 +199,26 @@ class ClientListener(threading.Thread):
             ready = select.select(check, [], [], 1)[0]
             
             if self.socket in ready:
-                self.handle_newrequest(Communication(self.socket.accept()[0], 'P'))
+                self.handle_newrequest(common.Communication(self.socket.accept()[0], 'P'))
                 
             if self.chatting and self.chatting[1] in ready:
-                print_threaded(self.chatting[0] + ": " + self.chatting[1].get_message())
+                try:
+                    message = self.chatting[1].get_message().split(' ', 1)
+                    if message[0] == 'SAY':
+                        if len(message) == 2:
+                            print_threaded(self.chatting[0] + ": " + message[1])
+                    elif message[0] == 'CLOSE':
+                        self.stop_chatting(True)
+                except common.SocketUnexpectedClosed:
+                    self.stop_chatting(True)
             
         self.socket.close()
         if self.chatting:
             self.chatting[1].close()
 
 try:
-    serversock = Communication(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "S")
+    serversock = common.Communication(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "S")
+    serversock.print_func = print_threaded if debug_level >= 1 else common.null_print
     serversock.connect((host, port))
 
     listen = ClientListener(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
@@ -227,19 +239,22 @@ try:
             break
     
     while chat_running:
-        input = raw_input_wrapper(CHAT_PROMPT).strip()
+        try:
+            input = raw_input_wrapper(CHAT_PROMPT).strip()
+        except EOFError:
+            input = "exit"
         if input == "": continue
         
-        if listen.is_chatting() and input[0] != '/':
-            listen.chatting[1].send("SAY %s\n" % input)
-            continue
+        if listen.is_chatting():
+            if input[0] != '/':
+                input = "say " + input
+            else:
+                input = input[1:]
         
-        if listen.is_chatting(): input = input[1:]
         command = input.split(' ')
         if command[0].lower() not in commands:
-            print("Unknown command: %s" % command[0].lower())
+            print("Unknown command: '%s'" % command[0].lower())
             continue
-        
         commands[command[0].lower()](serversock, command[1:])
         
     serversock.close()
