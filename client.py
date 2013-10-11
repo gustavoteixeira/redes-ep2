@@ -141,19 +141,22 @@ notification_handlers = {
 
 def notification_handler():
     while True:
-        (readvalid, _, _) = select.select([serversock], [], [], 0.01)
-        if not RUNNING_RAWINPUT: return
-        if serversock in readvalid:
-            notification = serversock.receive().strip().split(' ')
-            if notification[0].upper() != "NOTIFICATION":
-                print_threaded("Unexpected message from server: %s" % repr(notification))
-            elif notification[1].upper() not in notification_handlers:
-                print_threaded("Unknown notification: %s" % repr(notification[1]))
-            else:
-                notification_handlers[notification[1].upper()](serversock, notification[2:])
+        notification = serversock.get_notification()
+        if not notification:
+            continue
+        
+        notification = notification.split(' ')
+        if notification[0].upper() != "NOTIFICATION":
+            print_threaded("Unexpected message from server: %s" % repr(notification))
+        elif notification[1].upper() not in notification_handlers:
+            print_threaded("Unknown notification: %s" % repr(notification[1]))
+        else:
+            notification_handlers[notification[1].upper()](serversock, notification[2:])
 
 try:
     your_username = None
+    
+    # Login Process
     while True:
         while True:
             your_username = raw_input("Username: ")
@@ -173,8 +176,8 @@ try:
             break
     
     chat_running = True
+    notification_thread = thread.start_new_thread(notification_handler, ())
     while chat_running:
-        notification_thread = thread.start_new_thread(notification_handler, ())
         input = raw_input_wrapper(CHAT_PROMPT).strip()
         
         if input == "": continue
