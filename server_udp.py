@@ -56,6 +56,22 @@ def command_queryuserinfo(sock, address, args):
     user = users[target_user]
     sock.sendto("%s %s\n" % (user[0][0], user[1]), address)
     
+def command_queryaddressinfo(sock, address, args):
+    if address not in ip_username: 
+        sock.sendto("PERMISSION_DENIED\n", address)
+        return
+    try:
+        ip = args[0]
+        port = int(args[1])
+    except (ValueError, IndexError):
+        sock.sendto("INPUT_ERROR\n", address)
+        return
+    data = (ip, port)
+    if data not in ip_username:
+        sock.sendto("UNKNOWN_USER\n", address)
+        return
+    sock.sendto("%s\n" % ip_username[data], address)
+    
 def command_logout(sock, address, args):
     if address not in ip_username: 
         sock.sendto("PERMISSION_DENIED\n", address)
