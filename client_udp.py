@@ -109,6 +109,8 @@ def command_help(master, args):
     print("The following commands are avaiable: " + reduce(lambda a, b: a + ", " + b, commands))
     
 def command_exit(master, args):
+    if master.is_chatting():
+        master.stop_chatting()
     master.add_handler(lambda data: data == "BYE\n")
     master.queue_write("LOGOUT\n", server_address)
     time.sleep(1)
