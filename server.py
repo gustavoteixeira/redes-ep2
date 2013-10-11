@@ -60,18 +60,7 @@ class ClientThread(threading.Thread):
         
     def command_listusers(self, args):
         self.socket.send(reduce(lambda a, b: a + " " + b, users) + "\n")
-        
-    def command_isbusy(self, target_user):
-        if target_user not in users:
-            self.socket.send("UNKNOWN_USER\n")
-            return
-            
-        if users[target_user].in_chat:
-            self.socket.send("IS_BUSY\n")
-            return
-            
-        self.socket.send("IS_FREE\n")
-    
+           
     def command_enterchat(self, target_user):
         self.in_chat = target_user
         self.socket.send("OK\n")
@@ -90,7 +79,8 @@ class ClientThread(threading.Thread):
             self.socket.send("UNKNOWN_USER\n")
             return
         user = users[target_user]
-        self.socket.send("%s %s\n" % (user.ip, user.listen_port))
+        busy = "BUSY" if user.in_chat else "FREE"
+        self.socket.send("%s %s %s\n" % (user.ip, user.listen_port, busy))
         
     def command_logout(self, args):
         self.running = False
@@ -148,7 +138,6 @@ class ClientThread(threading.Thread):
         'HEARTBEAT': permissionchecker_islogged,
         'LISTUSERS': permissionchecker_islogged,
         'KILLSERVER': permissionchecker_islogged,
-        'ISBUSY': permissionchecker_islogged,
         'ENTERCHAT': permissionchecker_islogged,
         'LEAVECHAT': permissionchecker_islogged,
         'QUERYUSERINFO': permissionchecker_islogged,
@@ -159,7 +148,6 @@ class ClientThread(threading.Thread):
         'HEARTBEAT': command_heartbeat,
         'LISTUSERS': command_listusers,
         'KILLSERVER': command_killserver,
-        'ISBUSY': command_isbusy,
         'ENTERCHAT': command_enterchat,
         'LEAVECHAT': command_leavechat,
         'QUERYUSERINFO': command_queryuserinfo,

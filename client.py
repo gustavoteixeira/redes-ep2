@@ -81,20 +81,45 @@ def command_chat(server, args):
     if len(args) != 1:
         print("Correct usage: 'chat USER'")
         return
+        
+    if listen.is_chatting():
+        print("You can chat with only one person each time.")
+        return
+        
     target_user = args[0]
-    server.send_message("ISBUSY %s" % target_user)
+    
+    if target_user == your_username:
+        print("You can't chat with yourself.")
+        return
+    
+    server.send_message("QUERYUSERINFO %s" % target_user)
     response = server.get_message()
+    
+    # Handle ISBUSY response
     if response == "UNKNOWN_USER":
         print("User '%s' is not logged in." % target_user)
         return
-    elif response == "IS_BUSY":
-        print("User '%s' is busy." % target_user)
+        
+    userdata = response.split(' ')
+    try:
+        userdata[1] = int(userdata[1])
+        if userdata[2] != "FREE":
+            print("User '%s' is busy." % target_user)
+            return
+    except (ValueError, IndexError):
+        print("Server sent bad data.")
         return
-    elif response != "IS_FREE":
-        print("Internal server error.")
-        return
+        
+    peer = Communication(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "P")
+    peer.sock.settimeout(30)
+    peer.connect((userdata[0], userdata[1]))
+    peer.send_message("CHATREQUEST " + your_username)
+    if peer.get_message() == "OK":
+        listen.chatting = (target_user, peer)
+        print("User '%s' accepted your chat request" % target_user)
     else:
-        raise StartChatMessage(target_user)
+        print("User '%s' refused your chat request" % target_user)
+        peer.close()
 
 def command_accept(server, args):
     target_user = args[0]
@@ -156,8 +181,8 @@ class ClientListener(threading.Thread):
         while chat_running:
             ready = select.select([self.socket], [], [], 1)[0]
             if self.socket in ready:
-                continue
-            self.handle_newrequest(Communication(self.socket.accept()[0], 'P'))
+                self.handle_newrequest(Communication(self.socket.accept()[0], 'P'))
+            
         self.socket.close()
 
 try:
@@ -192,37 +217,15 @@ try:
             print("Unknown command: %s" % command[0].lower())
             continue
         
-        try:
-            commands[command[0].lower()](serversock, command[1:])
-        except StartChatMessage, chat_data:
-            if listen.is_chatting():
-                print("You can chat with only one person each time.")
-                continue
-            if chat_data.target_user == your_username:
-                print("You can't chat with yourself.")
-                continue
-            
-            serversock.send_message("QUERYUSERINFO %s" % chat_data.target_user)
-            peerdata = serversock.get_message().split(' ')
-            peerdata[1] = int(peerdata[1])
-            
-            peer = Communication(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "P")
-            peer.sock.settimeout(30)
-            peer.connect((peerdata[0], peerdata[1]))
-            peer.send_message("CHATREQUEST " + your_username)
-            if peer.get_message() == "OK":
-                listen.chatting = (chat_data.target_user, peer)
-                print("User '%s' accepted your chat request" % chat_data.target_user)
-            else:
-                print("User '%s' refused your chat request" % chat_data.target_user)
-                peer.close()
+        commands[command[0].lower()](serversock, command[1:])
         
     serversock.close()
     
 except common.SocketUnexpectedClosed:
     chat_running = False
     print("Lost connection to server.")
-except Exeception, err:
+except Exception, err:
     chat_running = False
-    print("Unexpected python exception: " + err)
+    import traceback
+    print(traceback.format_exc())
     
