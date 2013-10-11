@@ -10,13 +10,25 @@ class VerboseSocket:
         self.name = name
         self.print_func = print_func
         
+    def recvfrom(self):
+        data = self.sock.recvfrom(2048)
+        self.debug(repr(data), '<')
+        return data
+        
+    def sendto(self, data, address):
+        self.sock.sendto(data, address)
+        self.debug(repr(address) + " -- " + repr(data), '>')
+        
     def send(self, arg):
         self.sock.send(arg)
         self.debug(repr(arg), '>')
     
     def receive(self):
-        data = self.sock.recv(2048)
-        if len(data) == 0:
+        try:
+            data = self.sock.recv(2048)
+            if len(data) == 0:
+                raise SocketUnexpectedClosed()
+        except socket.error:
             raise SocketUnexpectedClosed()
         self.debug(repr(data), '<')
         return data
