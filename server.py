@@ -181,7 +181,7 @@ listensock.bind(("0.0.0.0", server_listen_port))
 listensock.listen(2)
 
 while server_running:
-    if listensock not in select.select([listensock], [], [], 10)[0]:
+    if listensock not in select.select([listensock], [], [], 5)[0]:
         continue
     ClientThread(listensock.accept()[0]).start()
 

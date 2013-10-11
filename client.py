@@ -4,15 +4,22 @@ import socket, sys, re, select, readline, thread
 import common, args
 
 (host, port, tcp) = args.parse_client()
-        
 if not tcp:
     raise Exception("UDP NYI")
 
 CHAT_PROMPT = "> "
-RUNNING_RAWINPUT = False
+
+# Globals
+chat_running = True
+rawinput_running = False
+listensock = None
+serversock = None
+commands = {}
+pending_chatrequests = {}
+chatting = None
     
 def print_threaded(message):
-    if not RUNNING_RAWINPUT:
+    if not rawinput_running:
         print(message)
         return
     sys.stdout.write('\r'+' '*(len(readline.get_line_buffer())+2)+'\r')
@@ -21,12 +28,19 @@ def print_threaded(message):
     sys.stdout.flush()
 
 def raw_input_wrapper(prompt):
-    global RUNNING_RAWINPUT
-    RUNNING_RAWINPUT = True
+    global rawinput_running
+    rawinput_running = True
     resp = raw_input(prompt)
-    RUNNING_RAWINPUT = False
+    rawinput_running = False
     return resp
 
+def read_validusername():
+    while True:
+        username = raw_input("Username: ")
+        if re.match("^[a-zA-Z]+$", username):
+            return username
+        print("Invalid username. Valid is ^[a-zA-Z]+$")
+    
 class ServerCommunication(common.VerboseSocket):
     def __init__(self, socket):
         common.VerboseSocket.__init__(self, socket, "S")
@@ -93,69 +107,65 @@ def command_chat(server, args):
     else:
         raise ListenMessage()
 
+def command_accept(server, args):
+    target_user = args[0]
+    if target_user not in pending_chatrequests:
+        print("User '%s' has not requested a chat with you. Use 'chat %s' instead." % (target_user, target_user))
+        return
+        
+    serversock.send("QUERYUSERINFO %s\n" % target_user)
+    (target_ip, target_port) = serversock.get_message().split(' ')
+    
+    global chatting
+    chatting = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "P")
+    chatting.connect((target_ip, int(target_port)))
+    chatting.send("nope.avi\n")
+    print("You are now chatting with '%s'!" % target_user)
+    
+def command_help(server, args):
+    print("The following commands are avaiable: " + reduce(lambda a, b: a + ", " + b, commands))
+    
 def command_exit(server, args):
     server.send("LOGOUT\n")
     server.get_message()
-    raise ExitMessage()
+    global chat_running
+    chat_running = False
     
 commands = {
     'users': command_users,
     'chat': command_chat,
+    'accept': command_accept,
+    'help': command_help,
     'exit': command_exit
 }
 
 def notification_chatrequest(server, args):
     target_user = args[0]
     print_threaded("You received a chat request from '%s'. If you accept, run 'accept %s'." % (target_user, target_user))
-    return
-
-    
-    accept = False
-    while True:
-        resp = raw_input("Chat request from '%s', accept? (y/n) " % target_user).lower()
-        if resp == 'y' or resp == 'n':
-            accept = (resp == 'y')
-            break
-    if not accept:
-        # Modo FDP, ignorar simplismente.
-        return
-    
-    serversock.send("QUERYUSERINFO %s\n" % target_user)
-    (target_ip, target_port) = serversock.receive().strip().split(' ')
-    p2psock = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "P")
-    p2psock.connect((target_ip, int(target_port)))
-    p2psock.send("nope.avi\n")
-    p2psock.close()
+    pending_chatrequests[target_user] = True
 
 notification_handlers = {
     'CHATREQUEST': notification_chatrequest
 }
 
 def notification_handler():
-    while True:
+    while chat_running:
         notification = serversock.get_notification()
         if not notification:
             continue
         
         notification = notification.split(' ')
-        if notification[0].upper() != "NOTIFICATION":
-            print_threaded("Unexpected message from server: %s" % repr(notification))
-        elif notification[1].upper() not in notification_handlers:
+        if notification[0].upper() not in notification_handlers:
             print_threaded("Unknown notification: %s" % repr(notification[1]))
         else:
-            notification_handlers[notification[1].upper()](serversock, notification[2:])
+            notification_handlers[notification[0].upper()](serversock, notification[1:])
 
 try:
     your_username = None
     
     # Login Process
     while True:
-        while True:
-            your_username = raw_input("Username: ")
-            if not re.match("^[a-zA-Z]+$", your_username):
-                print("Invalid username. Valid is ^[a-zA-Z]+$")
-            else:
-                break
+        your_username = read_validusername()
         serversock.send("LOGIN %s %s\n" % (your_username, listensock.sock.getsockname()[1]))
         
         response = serversock.receive()
@@ -167,33 +177,28 @@ try:
             print("Welcome, %s!" % your_username)
             break
     
-    chat_running = True
     notification_thread = thread.start_new_thread(notification_handler, ())
     while chat_running:
         input = raw_input_wrapper(CHAT_PROMPT).strip()
-        
         if input == "": continue
-        #if input[0] != '/':
-        #    print("Cara, soh tem comandos com / agora.")
-        #    continue
-        command = input.split(' ')
         
-        if command[0].lower() not in commands:
-            print("Unknown command: %s" % command[0].lower())
-            continue
-        
-        try:
-            commands[command[0].lower()](serversock, command[1:])
-        except ExitMessage:
-            chat_running = False
-        except ListenMessage, listen_data:
+        if chatting and input[0] != '/':
+            chatting.send("SAY %s\n" % input)
+        else:
+            if chatting: input = input[1:]
+            command = input.split(' ')
+            if command[0].lower() not in commands:
+                print("Unknown command: %s" % command[0].lower())
+                continue
+            
             try:
-                listensock.sock.settimeout(10)
-                p2psocket = common.VerboseSocket(listensock.accept()[0], "P")
-                print(p2psocket.receive())
-                p2psocket.close()
-            except socket.timeout:
-                print("Chat request refused.")
+                commands[command[0].lower()](serversock, command[1:])
+            except ListenMessage, listen_data:
+                try:
+                    listensock.sock.settimeout(10)
+                    chatting = common.VerboseSocket(listensock.accept()[0], "P")
+                except socket.timeout:
+                    print("Chat request refused.")
         
     serversock.close()
     listensock.close()
