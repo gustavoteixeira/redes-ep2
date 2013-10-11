@@ -1,10 +1,10 @@
 ﻿from __future__ import print_function
-import socket, sys, re, select, readline, threading
+import socket, sys, re, select, readline, threading, argparse
 
 import common, args
 
-(host, port, tcp) = args.parse_client()
-if not tcp:
+configuration = args.parse_client()
+if configuration.udp:
     raise Exception("UDP NYI")
 
 CHAT_PROMPT = "> "
@@ -15,7 +15,6 @@ rawinput_running = False
 listen = None
 commands = {}
 your_username = None
-debug_level = 1 # 0 = nothing, 1 = server/listen socket, 2+ = all sockets
     
 def print_threaded(message):
     if not rawinput_running:
@@ -84,7 +83,7 @@ def command_chat(server, args):
         return
         
     peer = common.Communication(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "P")
-    peer.print_func = print_threaded if debug_level >= 2 else common.null_print
+    peer.print_func = print_threaded if configuration.verbosity >= 2 else common.null_print
     peer.sock.settimeout(30)
     peer.connect((userdata[0], userdata[1]))
     peer.send_message("CHATREQUEST " + your_username)
@@ -154,11 +153,11 @@ class ClientListener(threading.Thread):
     def __init__(self, socket):
         threading.Thread.__init__(self)
         self.socket = common.VerboseSocket(socket, "L")
+        self.socket.print_func = print_threaded if configuration.verbosity >= 1 else common.null_print
         self.socket.bind(("0.0.0.0", 0))
         self.socket.listen(2)
         self.chatting = None
         self.pending = {}
-        self.socket.print_func = print_threaded if debug_level >= 1 else common.null_print
         
     def get_port(self):
         return self.socket.sock.getsockname()[1]
@@ -166,12 +165,14 @@ class ClientListener(threading.Thread):
     def stop_chatting(self, forced = False):
         if not self.chatting: return
         
-        if not forced:
-            self.chatting[1].send_message("CLOSE")
-    
         global CHAT_PROMPT
         CHAT_PROMPT = "> "
-        print_threaded("Your chat with '%s' has ended." % self.chatting[0])
+        
+        if not forced:
+            self.chatting[1].send_message("CLOSE")
+            print_threaded("You finished your chat with '%s'." % self.chatting[0])
+        else:
+            print_threaded("Your chat with '%s' was closed by the remote host." % self.chatting[0])
         
         self.chatting[1].close()
         self.chatting = None
@@ -182,7 +183,7 @@ class ClientListener(threading.Thread):
         CHAT_PROMPT = your_username + ": "
         
     def handle_newrequest(self, socket):
-        socket.print_func = print_threaded if debug_level >= 2 else common.null_print
+        socket.print_func = print_threaded if configuration.verbosity >= 2 else common.null_print
         request = socket.get_message().split(' ')
         if len(request) == 2 and request[0] == "CHATREQUEST":
             if self.chatting: #single chat only
@@ -225,8 +226,8 @@ class ClientListener(threading.Thread):
 
 try:
     serversock = common.Communication(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "S")
-    serversock.print_func = print_threaded if debug_level >= 1 else common.null_print
-    serversock.connect((host, port))
+    serversock.print_func = print_threaded if configuration.verbosity >= 1 else common.null_print
+    serversock.connect((configuration.host, configuration.port))
 
     listen = ClientListener(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
     listen.start()
@@ -249,6 +250,7 @@ try:
         try:
             input = raw_input_wrapper(CHAT_PROMPT).strip()
         except EOFError:
+            print("exit")
             input = "exit"
         if input == "": continue
         
@@ -264,6 +266,7 @@ try:
             continue
         commands[command[0].lower()](serversock, command[1:])
         
+    print("Bye.")
     serversock.close()
     
 except common.SocketUnexpectedClosed:

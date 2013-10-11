@@ -1,3 +1,4 @@
+from __future__ import print_function
 import socket, ssl, sys, threading, select
 import common, args
 
@@ -5,11 +6,16 @@ server_running = True
 HEARTBEAT_INTERVAL = None
 users = {}
 
+configuration = args.parse_server()
+if configuration.udp:
+    raise Exception("UDP NYI")
+
 class ClientThread(threading.Thread):
     def __init__(self, socket):
         threading.Thread.__init__(self)
         (self.ip, self.port) = socket.getpeername()
         self.socket = common.VerboseSocket(socket, "C " + str(self.ip) + ":" + str(self.port))
+        self.socket.print_func = print if configuration.verbosity >= 1 else common.null_print
         
         self.running = True
         self.username = None
@@ -132,13 +138,10 @@ class ClientThread(threading.Thread):
         'QUERYUSERINFO': command_queryuserinfo,
         'LOGOUT': command_logout
     }
-
-(server_listen_port, tcp) = args.parse_server()
-if not tcp:
-    raise Exception("UDP NYI")
-    
+  
 listensock = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "L")
-listensock.bind(("0.0.0.0", server_listen_port))
+listensock.print_func = print if configuration.verbosity >= 1 else common.null_print
+listensock.bind(("0.0.0.0", configuration.port))
 listensock.listen(2)
 
 while server_running:
