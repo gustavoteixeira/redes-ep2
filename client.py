@@ -1,18 +1,9 @@
 ﻿from __future__ import print_function
 import socket, sys, re, select, readline, thread
 
-import common
+import common, args
 
-host = sys.argv[1]
-port = int(sys.argv[2])
-tcp = True
-if len(sys.argv) > 3:
-    if sys.argv[3] == 'udp':
-        tcp = False
-    elif sys.argv[3] == 'tcp':
-        tcp = True
-    else:
-        raise Exception("Unknown method: " + sys.argv[2])
+(host, port, tcp) = args.parse_client()
         
 if not tcp:
     raise Exception("UDP NYI")
@@ -114,10 +105,11 @@ commands = {
 }
 
 def notification_chatrequest(server, args):
-    print_threaded("CHAT REQUEST!!")
+    target_user = args[0]
+    print_threaded("You received a chat request from '%s'. If you accept, run 'accept %s'." % (target_user, target_user))
     return
 
-    target_user = args[0]
+    
     accept = False
     while True:
         resp = raw_input("Chat request from '%s', accept? (y/n) " % target_user).lower()

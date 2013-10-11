@@ -1,16 +1,14 @@
 import socket, ssl, sys, threading, select
-import common
+import common, args
 
 server_running = True
 HEARTBEAT_INTERVAL = None
 users = {}
 
 class ClientThread(threading.Thread):
-    def __init__(self, ip, port, socket):
+    def __init__(self, socket):
         threading.Thread.__init__(self)
-        self.ip = ip
-        self.port = port
-        
+        (self.ip, self.port) = socket.getpeername()
         self.socket = common.VerboseSocket(socket, "C " + str(self.ip) + ":" + str(self.port))
         
         self.running = True
@@ -174,16 +172,7 @@ class ClientThread(threading.Thread):
         'LOGOUT': command_logout
     }
 
-server_listen_port = int(sys.argv[1])
-tcp = True
-if len(sys.argv) > 2:
-    if sys.argv[2] == 'udp':
-        tcp = False
-    elif sys.argv[2] == 'tcp':
-        tcp = True
-    else:
-        raise Exception("Unknown method: " + sys.argv[2])
-
+(server_listen_port, tcp) = args.parse_server()
 if not tcp:
     raise Exception("UDP NYI")
     
@@ -192,7 +181,8 @@ listensock.bind(("0.0.0.0", server_listen_port))
 listensock.listen(2)
 
 while server_running:
-    (clientsock, (ip, port)) = listensock.accept()
-    ClientThread(ip, port, clientsock).start()
+    if listensock not in select.select([listensock], [], [], 10)[0]:
+        continue
+    ClientThread(listensock.accept()[0]).start()
 
 listensock.close()
