@@ -13,7 +13,6 @@ class ClientThread(threading.Thread):
         
         self.running = True
         self.username = None
-        self.in_chat = None
         self.buffer = []
         
     def fetch_messages(self):
@@ -60,27 +59,13 @@ class ClientThread(threading.Thread):
         
     def command_listusers(self, args):
         self.socket.send(reduce(lambda a, b: a + " " + b, users) + "\n")
-           
-    def command_enterchat(self, target_user):
-        self.in_chat = target_user
-        self.socket.send("OK\n")
-    
-    def command_leavechat(self, args):
-        self.in_chat = None
-        self.socket.send("OK\n")
-        
-    def command_killserver(self, args):
-        global server_running
-        server_running = False
-        self.socket.send("OK\n")
         
     def command_queryuserinfo(self, target_user):
         if target_user not in users:
             self.socket.send("UNKNOWN_USER\n")
             return
         user = users[target_user]
-        busy = "BUSY" if user.in_chat else "FREE"
-        self.socket.send("%s %s %s\n" % (user.ip, user.listen_port, busy))
+        self.socket.send("%s %s\n" % (user.ip, user.listen_port))
         
     def command_logout(self, args):
         self.running = False
@@ -137,9 +122,6 @@ class ClientThread(threading.Thread):
         'LOGIN': lambda x: True,
         'HEARTBEAT': permissionchecker_islogged,
         'LISTUSERS': permissionchecker_islogged,
-        'KILLSERVER': permissionchecker_islogged,
-        'ENTERCHAT': permissionchecker_islogged,
-        'LEAVECHAT': permissionchecker_islogged,
         'QUERYUSERINFO': permissionchecker_islogged,
         'LOGOUT': permissionchecker_islogged
     }
@@ -147,9 +129,6 @@ class ClientThread(threading.Thread):
         'LOGIN': command_login,
         'HEARTBEAT': command_heartbeat,
         'LISTUSERS': command_listusers,
-        'KILLSERVER': command_killserver,
-        'ENTERCHAT': command_enterchat,
-        'LEAVECHAT': command_leavechat,
         'QUERYUSERINFO': command_queryuserinfo,
         'LOGOUT': command_logout
     }

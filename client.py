@@ -13,7 +13,6 @@ CHAT_PROMPT = "> "
 chat_running = True
 rawinput_running = False
 listen = None
-serversock = None
 commands = {}
 your_username = None
     
@@ -62,14 +61,6 @@ class Communication(common.VerboseSocket):
     def send_message(self, message):
         self.send(message + "\n")
     
-serversock = Communication(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "S")
-serversock.connect((host, port))
-
-class ExitMessage: pass
-class StartChatMessage:
-    def __init__(self, target_user):
-        self.target_user = target_user
-
 def command_users(server, args):
     server.send("LISTUSERS\n")
     userlist = server.get_message().split(' ')
@@ -103,9 +94,6 @@ def command_chat(server, args):
     userdata = response.split(' ')
     try:
         userdata[1] = int(userdata[1])
-        if userdata[2] != "FREE":
-            print("User '%s' is busy." % target_user)
-            return
     except (ValueError, IndexError):
         print("Server sent bad data.")
         return
@@ -115,11 +103,15 @@ def command_chat(server, args):
     peer.connect((userdata[0], userdata[1]))
     peer.send_message("CHATREQUEST " + your_username)
     if peer.get_message() == "OK":
-        listen.chatting = (target_user, peer)
-        print("User '%s' accepted your chat request" % target_user)
+        listen.set_chatting(target_user, peer)
+        print("User '%s' accepted your chat request." % target_user)
+        return
+        
+    if peer.get_message() == "BUSY":
+        print("User '%s' is busy." % target_user)
     else:
-        print("User '%s' refused your chat request" % target_user)
-        peer.close()
+        print("User '%s' refused your chat request." % target_user)
+    peer.close()
 
 def command_accept(server, args):
     target_user = args[0]
@@ -131,8 +123,20 @@ def command_accept(server, args):
     socket.send_message("OK")
     
     print("You are now chatting with '%s'!" % target_user)
-    listen.chatting = (target_user, socket)
+    listen.set_chatting(target_user, socket)
     del listen.pending[target_user]
+    
+def command_refuse(server, args):
+    target_user = args[0]
+    if target_user not in listen.pending:
+        print("No chat request from '%s' found." % (target_user))
+        return
+        
+    socket = listen.pending[target_user]
+    socket.send_message("REFUSED")
+    socket.close()
+    del listen.pending[target_user]
+    print("Chat request from '%s' refused." % target_user)
     
 def command_help(server, args):
     print("The following commands are avaiable: " + reduce(lambda a, b: a + ", " + b, commands))
@@ -147,6 +151,7 @@ commands = {
     'users': command_users,
     'chat': command_chat,
     'accept': command_accept,
+    'refuse': command_refuse,
     'help': command_help,
     'exit': command_exit
 }
@@ -163,13 +168,20 @@ class ClientListener(threading.Thread):
     def get_port(self):
         return self.socket.sock.getsockname()[1]
         
+    def set_chatting(self, username, socket):
+        self.chatting = (username, socket)
+        socket.print_func = print_threaded
+        
     def handle_newrequest(self, socket):
         request = socket.get_message().split(' ')
         if len(request) == 2 and request[0] == "CHATREQUEST":
+            if self.chatting: #single chat only
+                socket.send_message("BUSY")
+                return
+        
             username = request[1]
             self.pending[username] = socket
-            print_threaded("You received a chat request from '%s'. If you accept, run 'accept %s'." % (username, username))
-            return
+            print_threaded("You received a chat request from '{0}'. You may 'accept {0}' or 'refuse {0}'.".format(username))
         else:
             # invalid request
             socket.close()
@@ -179,13 +191,24 @@ class ClientListener(threading.Thread):
         
     def run(self):
         while chat_running:
-            ready = select.select([self.socket], [], [], 1)[0]
+            check = [self.socket]
+            if self.chatting: check.append(self.chatting[1])
+            ready = select.select(check, [], [], 1)[0]
+            
             if self.socket in ready:
                 self.handle_newrequest(Communication(self.socket.accept()[0], 'P'))
+                
+            if self.chatting and self.chatting[1] in ready:
+                print_threaded(self.chatting[0] + ": " + self.chatting[1].get_message())
             
         self.socket.close()
+        if self.chatting:
+            self.chatting[1].close()
 
 try:
+    serversock = Communication(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "S")
+    serversock.connect((host, port))
+
     listen = ClientListener(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
     listen.start()
     
