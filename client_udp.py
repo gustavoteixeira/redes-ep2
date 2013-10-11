@@ -11,34 +11,55 @@ listen = None
 commands = {}
 your_username = None
 server_address = None
+server_handler = None
 
 print_threaded = client_common.print_threaded
 raw_input_wrapper = client_common.raw_input_wrapper
 read_validusername = client_common.read_validusername
+
+class ServerMessageHandler:
+    def __init__(self):
+        self.handlers = []
+        
+    def __call__(self, data):
+        if not self.handlers:
+            print_threaded("Unexpected ServerMessageHandler call.")
+        else:
+            self.handlers.pop()(data)
+    
+    def add_handler(self, handler):
+        self.handlers.insert(0, handler)
     
 # COMMANDS
-def command_say(server, args):
+def command_say(master, args):
     pass
 
-def command_users(server, args):
+def command_users(master, args):
+    def users_print(data):
+        userlist = data.strip().split(' ')
+        print_threaded("Users:")
+        for user in userlist:
+            print_threaded(">> %s" % user)
+
+    master.queue_write("LISTUSERS\n", server_address)
+    server_handler.add_handler(users_print)
+
+def command_chat(master, args):
     pass
 
-def command_chat(server, args):
-    pass
-
-def command_accept(server, args):
+def command_accept(master, args):
     pass
     
-def command_refuse(server, args):
+def command_refuse(master, args):
     pass
 
-def command_close(server, args):
+def command_close(master, args):
     pass
     
-def command_help(server, args):
+def command_help(master, args):
     print("The following commands are avaiable: " + reduce(lambda a, b: a + ", " + b, commands))
     
-def command_exit(server, args):
+def command_exit(master, args):
     pass
     
 commands = {
@@ -57,74 +78,34 @@ class SocketMaster(threading.Thread):
         threading.Thread.__init__(self)
         self.socket = socket
         
-        self.chatting = None
-        self.pending = {}
-        
-    def get_port(self):
-        return self.socket.sock.getsockname()[1]
-        
-    def stop_chatting(self, forced = False):
-        if not self.chatting: return
-        
-        client_common.CHAT_PROMPT = "> "
-        
-        if not forced:
-            self.chatting[1].send_message("CLOSE")
-            print_threaded("You finished your chat with '%s'." % self.chatting[0])
-        else:
-            print_threaded("Your chat with '%s' was closed by the remote host." % self.chatting[0])
-        
-        self.chatting[1].close()
-        self.chatting = None
-        
-    def set_chatting(self, username, socket):
-        self.chatting = (username, socket)
-        client_common.CHAT_PROMPT = your_username + ": "
-        
-    def handle_newrequest(self, socket):
-        socket.print_func = print_threaded if configuration.verbosity >= 2 else common.null_print
-        request = socket.get_message().split(' ')
-        if len(request) == 2 and request[0] == "CHATREQUEST":
-            if self.chatting: #single chat only
-                socket.send_message("BUSY")
-                return
-        
-            username = request[1]
-            self.pending[username] = socket
-            print_threaded("You received a chat request from '{0}'. You may 'accept {0}' or 'refuse {0}'.".format(username))
-        else:
-            # invalid request
-            socket.close()
-        
+        self.expect = {}
+        self.pending_write = []
+
+           
     def is_chatting(self):
-        return self.chatting
+        return False
+        
+    def queue_write(self, message, address):
+        self.pending_write.insert(0, (message, address))
         
     def run(self):
         while chat_running:
-            check = [self.socket]
-            if self.chatting: check.append(self.chatting[1])
-            ready = select.select(check, [], [], 1)[0]
+            (readcheck, writecheck, _) = select.select([self.socket], [self.socket], [], configuration.heartbeat / 10)
             
-            if self.socket in ready:
-                self.handle_newrequest(common.Communication(self.socket.accept()[0], 'P'))
+            if self.socket in readcheck:
+                (data, address) = self.socket.recvfrom()
+                if address in self.expect:
+                    self.expect[address](data)
+                else:
+                    print_threaded("Unexpected message '%s' from '%s'\n" % (repr(data), repr(address)))
                 
-            if self.chatting and self.chatting[1] in ready:
-                try:
-                    message = self.chatting[1].get_message().split(' ', 1)
-                    if message[0] == 'SAY':
-                        if len(message) == 2:
-                            print_threaded(self.chatting[0] + ": " + message[1])
-                    elif message[0] == 'CLOSE':
-                        self.stop_chatting(True)
-                except common.SocketUnexpectedClosed:
-                    self.stop_chatting(True)
-            
-        self.socket.close()
-        if self.chatting:
-            self.chatting[1].close()
+            if self.socket in writecheck:
+                if self.pending_write:
+                    write = self.pending_write.pop()
+                    self.socket.sendto(write[0], write[1])
 
 def run(config):
-    global configuration, chat_running, listen, your_username, server_address
+    global configuration, chat_running, listen, your_username, server_address, server_handler
     configuration = config
     UDP_TIMEOUT = configuration.heartbeat / 2
     server_address = (socket.gethostbyname(configuration.host), configuration.port)
@@ -152,7 +133,11 @@ def run(config):
              
         # Ok, send it to a thread and don't consider it ours anymore
         sockmaster = SocketMaster(mainsock)
+        sockmaster.start()
         del mainsock # don't even keep the old reference
+        
+        server_handler = ServerMessageHandler()
+        sockmaster.expect[server_address] = server_handler
         
         while chat_running:
             client_common.input_handler(sockmaster.is_chatting, commands, sockmaster)
