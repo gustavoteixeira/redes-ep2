@@ -1,5 +1,5 @@
 ﻿from __future__ import print_function
-import socket, sys, re, select, readline, threading, time, functools
+import socket, sys, re, select, readline, threading, time, os
 import common, client_common
 
 # Globals
@@ -79,32 +79,92 @@ def command_chat(master, args):
     master.queue_write("QUERYUSERINFO %s\n" % target_user, server_address)
 
 def command_accept(master, args):
-    target_user = args[0]
-    if target_user not in master.pending_chats:
-        print("User '%s' has not requested a chat with you. Use 'chat %s' instead." % (target_user, target_user))
-        return
+    if master.transfer:
+        if len(args) != 1:
+            print("Usage: /accept local_filename")
+            return
+        filename = args[0]
+        try:
+            open_file = open(filename, "wb")
+        except IOError:
+            print("Cannot open file '%s' for writing." % filename)
+    
+        transfer = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_DGRAM), "F")
+        transfer.connect(master.transfer[1])
+        master.queue_write("TRANSFEROK %s\n" % transfer.sock.getsockname()[1], master.chatting[1])
+        transfer.sock.settimeout(30)
         
-    master.queue_write("OK\n", master.pending_chats[target_user])
-    master.set_chatting(target_user, master.pending_chats[target_user])
-    del master.pending_chats[target_user]
-    print("You are now chatting with '%s'!" % target_user)
+        print("Writing file from %s to %s..." % (master.chatting[1], filename))
+        try:
+            bytes_received = 0
+            while bytes_received < master.transfer[0]:
+                bytes = transfer.sock.recv(min(2048, master.transfer[0] - bytes_received))
+                open_file.write(bytes)
+                bytes_received += len(bytes)
+                print("%s% done", 100 * (bytes_received/master.transfer[0]))
+            transfer.close()
+        except socket.timeout:
+            print("Conection failure.")
+        open_file.close()
+        
+    else:
+        target_user = args[0]
+        if target_user not in master.pending_chats:
+            print("User '%s' has not requested a chat with you. Use 'chat %s' instead." % (target_user, target_user))
+            return
+            
+        master.queue_write("CHATOK\n", master.pending_chats[target_user])
+        master.set_chatting(target_user, master.pending_chats[target_user])
+        del master.pending_chats[target_user]
+        print("You are now chatting with '%s'!" % target_user)
     
 def command_refuse(master, args):
-    target_user = args[0]
-    if target_user not in master.pending_chats:
-        print("No chat request from '%s' found." % (target_user))
-        return
-        
-    master.queue_write("REFUSED\n", master.pending_chats[target_user])
-    del master.pending_chats[target_user]
-    print("Chat request from '%s' refused." % target_user)
+    if master.transfer:
+        master.queue_write("TRANSFERREFUSED\n", master.transfer[1])
+        master.transfer = None
+        print("File request refused.")
+    else:
+        target_user = args[0]
+        if target_user not in master.pending_chats:
+            print("No chat request from '%s' found." % (target_user))
+            return
+            
+        master.queue_write("CHATREFUSED\n", master.pending_chats[target_user])
+        del master.pending_chats[target_user]
+        print("Chat request from '%s' refused." % target_user)
 
 def command_close(master, args):
     if master.is_chatting():
         master.stop_chatting()
     else:
         print("You're not chatting with anyone.")
+
+def command_sendfile(master, args):
+    if not master.is_chatting():
+        print("You're not chatting with anyone.")
+        return
+        
+    if len(args) != 1:
+        print("Usage: /sendfile filename")
+        return
     
+    target_file = args[0]
+    try:
+        open_file = open(target_file, "rb")
+    except IOError:
+        print("Couldn't open file '%s'" % target_file)
+        return
+    
+    size = os.fstat(open_file.fileno()).st_size
+    
+    transfer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    transfer.bind(("0.0.0.0", 0))
+    new_listen = transfer.getsockname()[1]
+    
+    master.transfer = [open_file, transfer, True] # file_object, socket, 'I'm the one sending'
+    
+    master.queue_write("SENDFILE %s %s %s\n" % (target_file, size, new_listen), master.chatting[1])
+        
 def command_help(master, args):
     print("The following commands are avaiable: " + reduce(lambda a, b: a + ", " + b, commands))
     
@@ -113,7 +173,6 @@ def command_exit(master, args):
         master.stop_chatting()
     master.add_handler(lambda data: data == "BYE\n")
     master.queue_write("LOGOUT\n", server_address)
-    time.sleep(1)
     global chat_running
     chat_running = False
     
@@ -124,6 +183,7 @@ commands = {
     'accept': command_accept,
     'refuse': command_refuse,
     'close': command_close,
+    'sendfile': command_sendfile,
     'help': command_help,
     'exit': command_exit
 }
@@ -138,6 +198,7 @@ class SocketMaster(threading.Thread):
         self.pending_write = []
         self.pending_chats = {}
         self.chatting = None
+        self.transfer = None
 
            
     def is_chatting(self):
@@ -165,11 +226,85 @@ class SocketMaster(threading.Thread):
     def set_chatting(self, username, address):
         self.chatting = (username, address)
         client_common.CHAT_PROMPT = your_username + ": "
-        
+    
+    def handle_input(self):
+        (data, address) = self.socket.recvfrom()
+        if address == server_address:
+            if not self.server_handler:
+                print_threaded("Unexpected server message.")
+            else:
+                self.server_handler.pop()(data)
+            return
+            
+        # All other addresses
+        commands = data.strip().split(' ')
+        if commands[0] == "CHATOK":
+            self.set_chatting(fetch_name(address), address)
+            print_threaded("%s accepted your chat request." % fetch_name(address))
+            
+        elif commands[0] == "BUSY":
+            print_threaded("%s is busy." % fetch_name(address))
+            
+        elif commands[0] == "CHATREFUSED":
+            print_threaded("%s refused your chat request." % fetch_name(address))
+            
+        elif commands[0] == "SAY":
+            print_threaded("%s: %s" % (fetch_name(address), ' '.join(commands[1:])))
+            
+        elif commands[0] == "CLOSE":
+            self.stop_chatting(True)
+            
+        elif commands[0] == "CHATREQUEST":
+            if len(commands) != 2: return
+            
+            other_username = commands[1]
+            if not other_username: return
+            
+            if self.is_chatting():
+                self.queue_write("BUSY\n", address)
+            else:
+                add_name(address, other_username)
+                print_threaded("%s requested a chat with you." % other_username)
+                self.pending_chats[other_username] = address
+                
+        elif commands[0] == "SENDFILE":
+            print_threaded(repr(commands))
+            if len(commands) != 4: return
+            (filename, size, new_listen) = commands[1:]
+            
+            try:
+                self.transfer = [int(size), (address[0], int(new_listen)), False] # False means "I'm not sending"
+            except ValueError as e:
+                return
+            print_threaded("%s requested to send a file '%s' with size %s to you." % (fetch_name(address), filename, size))
+            print_threaded("Accept it with /accept local_filename or /refuse.")
+            
+        elif commands[0] == "TRANSFEROK":
+            print_threaded("received TRANSFEROK -- " + repr(self.transfer))
+            if not self.transfer or not self.transfer[2]: return
+            try:
+                self.transfer.append(int(commands[1]))
+            except (ValueError, IndexError) as e:
+                print_threaded("problem getting the port" + str(e))
+                return
+            
+        elif commands[0] == "TRANSFERREFUSED":
+            if not self.transfer: return
+            print_threaded("%s refused your file transfer." % (fetch_name(address)))
+            self.transfer[0].close()
+            self.transfer[1].close()
+            self.transfer = None
+            
+        else:
+            print_threaded("Unexpected message '%s' from '%s'\n" % (repr(data), repr(address)))
+    
     def run(self):
         last_beat = time.time()
-        while chat_running:
+        while True:
             (readcheck, writecheck, _) = select.select([self.socket], [self.socket], [], configuration.heartbeat / 10)
+            
+            if not (chat_running or self.pending_write):
+                break
             
             if time.time() - last_beat > configuration.heartbeat:
                 self.queue_write("HEARTBEAT\n", server_address)
@@ -177,34 +312,7 @@ class SocketMaster(threading.Thread):
                 last_beat = time.time()
             
             if self.socket in readcheck:
-                (data, address) = self.socket.recvfrom()
-                if address == server_address:
-                    if not self.server_handler:
-                        print_threaded("Unexpected server message.")
-                    else:
-                        self.server_handler.pop()(data)
-                else:
-                    commands = data.strip().split(' ', 1)
-                    if commands[0] == "OK":
-                        self.set_chatting(fetch_name(address), address)
-                        print_threaded("%s accepted your chat request." % fetch_name(address))
-                    elif commands[0] == "BUSY":
-                        print_threaded("%s is busy." % fetch_name(address))
-                    elif commands[0] == "REFUSED":
-                        print_threaded("%s refused your chat request." % fetch_name(address))
-                    elif commands[0] == "SAY":
-                        print_threaded("%s: %s" % (fetch_name(address), ' '.join(commands[1:])))
-                    elif commands[0] == "CLOSE":
-                        self.stop_chatting(True)
-                    elif commands[0] == "CHATREQUEST":
-                        if len(commands) == 2:
-                            other_username = commands[1]
-                            if other_username:
-                                add_name(address, other_username)
-                                print_threaded("%s requested a chat with you." % other_username)
-                                self.pending_chats[other_username] = address
-                    else:
-                        print_threaded("Unexpected message '%s' from '%s'\n" % (repr(data), repr(address)))
+                self.handle_input()
                 
             if self.socket in writecheck:
                 while self.pending_write:
@@ -224,7 +332,7 @@ def run(config):
         
         # Keep the socket exclusive while we login
         while True:
-            your_username = read_validusername()
+            your_username = read_validusername() if not config.username else config.username
             mainsock.sendto("LOGIN %s %s\n" % (your_username, mainsock.sock.getsockname()[1]), server_address)
             
             (response, address) = mainsock.recvfrom()
@@ -237,6 +345,8 @@ def run(config):
             else:
                 print("Welcome, %s!" % your_username)
                 break
+            if not config.username:
+                return
              
         # Ok, send it to a thread and don't consider it ours anymore
         sockmaster = SocketMaster(mainsock)
@@ -244,6 +354,24 @@ def run(config):
         del mainsock # don't even keep the old reference
         
         while chat_running:
+            if sockmaster.transfer and sockmaster.transfer[2]:
+                for i in range(30):
+                    if len(sockmaster.transfer) < 4:
+                        time.sleep(1)
+                if len(sockmaster.transfer) < 4:
+                    print("Aborting file transfer...")
+                    sockmaster.transfer = None
+                else:
+                    sockmaster.transfer[1].connect((sockmaster.chatting[1][0], sockmaster.transfer[3]))
+                    print("Starting file transfer...")
+                    while True:
+                        data = sockmaster.transfer[0].read(2048)
+                        if len(data) == 0: break
+                        sockmaster.transfer[1].send(data)
+                    print("File transfer complete.")
+                    sockmaster.transfer[1].close()
+                    sockmaster.transfer = None
+        
             client_common.input_handler(sockmaster.is_chatting, commands, sockmaster)
             
         print("Bye.")

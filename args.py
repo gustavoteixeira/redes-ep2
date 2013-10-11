@@ -9,6 +9,7 @@ def parse_client():
     parser = argparse.ArgumentParser(description='Client for a peer to peer chat with centralized tracker.')
     parser.add_argument('host', help='Host of the central tracker')
     parser.add_argument('port', type=int, help='Port of the central tracker')
+    parser.add_argument('--username', help='Username to use.')
     parser.add_argument('--heartbeat', default=30, type=float,
         help="Send a message to the server every heartbeat seconds, so it doesn't consider us dead.")
     _common_arguments(parser)
