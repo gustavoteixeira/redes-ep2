@@ -1,5 +1,5 @@
 ﻿from __future__ import print_function
-import socket, ssl, sys, re, select, readline, threading
+import socket, ssl, sys, re, select, readline, threading, time, os
 import common, client_common
 
 # Globals
@@ -75,30 +75,89 @@ def command_chat(server, args):
     peer.close()
 
 def command_accept(server, args):
-    target_user = args[0]
-    if target_user not in listen.pending:
-        print("User '%s' has not requested a chat with you. Use 'chat %s' instead." % (target_user, target_user))
-        return
-        
-    socket = listen.pending[target_user]
-    socket.send_message("OK")
+    if listen.transfer:
+        if len(args) != 1:
+            print("Usage: /accept local_filename")
+            return
+        filename = args[0]
+        try:
+            open_file = open(filename, "wb")
+        except IOError:
+            print("Cannot open file '%s' for writing." % filename)
     
-    print("You are now chatting with '%s'!" % target_user)
-    listen.set_chatting(target_user, socket)
-    del listen.pending[target_user]
+        transfer = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_DGRAM), "F")
+        transfer.connect(master.transfer[1])
+        listen.chatting[1].send_message("TRANSFEROK %s\n" % transfer.sock.getsockname()[1])
+        transfer.sock.settimeout(30)
+        
+        print("Writing file from %s to %s..." % (listen.chatting[0], filename))
+        try:
+            bytes_received = 0
+            while bytes_received < listen.transfer[0]:
+                bytes = transfer.sock.recv(min(2048, master.transfer[0] - bytes_received))
+                open_file.write(bytes)
+                bytes_received += len(bytes)
+                print("%s% done", 100 * (bytes_received/master.transfer[0]))
+            transfer.close()
+        except socket.timeout:
+            print("Conection failure.")
+        open_file.close()
+    else:
+        target_user = args[0]
+        if target_user not in listen.pending:
+            print("User '%s' has not requested a chat with you. Use 'chat %s' instead." % (target_user, target_user))
+            return
+            
+        sock = listen.pending[target_user]
+        sock.send_message("OK")
+        
+        print("You are now chatting with '%s'!" % target_user)
+        listen.set_chatting(target_user, sock)
+        del listen.pending[target_user]
     
 def command_refuse(server, args):
-    target_user = args[0]
-    if target_user not in listen.pending:
-        print("No chat request from '%s' found." % (target_user))
+    if listen.transfer:
+        listen.chatting[1].send_message("TRANSFERREFUSED\n")
+        listen.transfer = None
+        print("File request refused.")
+    else:
+        target_user = args[0]
+        if target_user not in listen.pending:
+            print("No chat request from '%s' found." % (target_user))
+            return
+            
+        socket = listen.pending[target_user]
+        socket.send_message("REFUSED")
+        socket.close()
+        del listen.pending[target_user]
+        print("Chat request from '%s' refused." % target_user)
+    
+def command_sendfile(server, args):
+    if not listen.is_chatting():
+        print("You're not chatting with anyone.")
         return
         
-    socket = listen.pending[target_user]
-    socket.send_message("REFUSED")
-    socket.close()
-    del listen.pending[target_user]
-    print("Chat request from '%s' refused." % target_user)
-
+    if len(args) != 1:
+        print("Usage: /sendfile filename")
+        return
+    
+    target_file = args[0]
+    try:
+        open_file = open(target_file, "rb")
+    except IOError:
+        print("Couldn't open file '%s'" % target_file)
+        return
+    
+    size = os.fstat(open_file.fileno()).st_size
+    
+    transfer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    transfer.bind(("0.0.0.0", 0))
+    new_listen = transfer.getsockname()[1]
+    
+    listen.transfer = [open_file, transfer, True] # file_object, socket, 'I'm the one sending'
+    
+    listen.chatting[1].send_message("SENDFILE %s %s %s\n" % (target_file, size, new_listen))
+    
 def command_close(server, args):
     if listen.is_chatting():
         listen.stop_chatting()
@@ -120,6 +179,7 @@ commands = {
     'chat': command_chat,
     'accept': command_accept,
     'refuse': command_refuse,
+    'sendfile' : command_sendfile,
     'close': command_close,
     'help': command_help,
     'exit': command_exit
@@ -134,6 +194,7 @@ class ClientListener(threading.Thread):
         self.socket.listen(2)
         self.chatting = None
         self.pending = {}
+        self.transfer = None
         
     def get_port(self):
         return self.socket.sock.getsockname()[1]
@@ -185,12 +246,41 @@ class ClientListener(threading.Thread):
                 
             if self.chatting and self.chatting[1] in ready:
                 try:
-                    message = self.chatting[1].get_message().split(' ', 1)
+                    message = self.chatting[1].get_message().split(' ')
                     if message[0] == 'SAY':
                         if len(message) == 2:
                             print_threaded(self.chatting[0] + ": " + message[1])
                     elif message[0] == 'CLOSE':
                         self.stop_chatting(True)
+                        
+                    elif message[0] == "SENDFILE":
+                        if len(message) != 4: return
+                        (filename, size, new_listen) = message[1:]
+                        
+                        try:
+                            self.transfer = [int(size), (self.chatting[1].getpeername()[0], int(new_listen)), False] # False means "I'm not sending"
+                        except ValueError as e:
+                            return
+                        print_threaded("%s requested to send a file '%s' with size %s to you." % (fetch_name(address), filename, size))
+                        print_threaded("Accept it with /accept local_filename or /refuse.")
+                        
+                    elif message[0] == "TRANSFEROK":
+                        print_threaded("received TRANSFEROK -- " + repr(self.transfer))
+                        if not self.transfer or not self.transfer[2]: return
+                        try:
+                            self.transfer.append(int(message[1]))
+                        except (ValueError, IndexError) as e:
+                            print_threaded("problem getting the port" + str(e))
+                            return
+                        
+                    elif message[0] == "TRANSFERREFUSED":
+                        if not self.transfer: return
+                        print_threaded("%s refused your file transfer." % (fetch_name(address)))
+                        self.transfer[0].close()
+                        self.transfer[1].close()
+                        self.transfer = None
+                        
+                    
                 except common.SocketUnexpectedClosed:
                     self.stop_chatting(True)
             
@@ -227,6 +317,26 @@ def run(config):
                 break
         
         while chat_running:
+            if listen.transfer and listen.transfer[2]:
+                for i in range(30):
+                    ready = select.select([listen.transfer], [], [], 1)[0]
+                    if listen.transfer and listen.transfer not in ready:
+                        time.sleep(1)
+                    else:
+                        break
+                if len(listen.transfer) < 4:
+                    print("Aborting file transfer...")
+                    listen.transfer = None
+                else:
+                    file_transfer = listen.transfer[1].accept((listen.chatting[1].getpeername()[0], listen.transfer[3]))
+                    print("Starting file transfer...")
+                    while True:
+                        data = listen.transfer[0].read(2048)
+                        if len(data) == 0: break
+                        listen.transfer[1].send(data)
+                    print("File transfer complete.")
+                    listen.transfer[1].close()
+                listen.transfer = None
             client_common.input_handler(listen.is_chatting, commands, serversock)
             
         print("Bye.")

@@ -66,6 +66,9 @@ class VerboseSocket:
     def debug(self, message, style = ' '):
         self.print_func("[%s%s] %s" % (style, self.name, message))
         
+    def getpeername(self):
+        return self.sock.getpeername()
+        
 class Communication(VerboseSocket):
     def __init__(self, socket, name):
         VerboseSocket.__init__(self, socket, name)
@@ -84,7 +87,7 @@ class Communication(VerboseSocket):
         while not self.messages:
             self.read_socket()
         return self.messages.pop()
-        
+    
     def send_message(self, message):
         self.send(message + "\n")
         
