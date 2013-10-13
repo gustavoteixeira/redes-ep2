@@ -134,7 +134,10 @@ def run(config):
     global configuration
     configuration = config
     
-    listensock = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "L")
+    server_sock = ssl.wrap_socket(socket.socket(socket.AF_INET, socket.SOCK_STREAM),
+                                  server_side=True,
+                                  certfile="cert.pem")
+    listensock = common.VerboseSocket(server_sock, "L")
     listensock.print_func = print if configuration.verbosity >= 1 else common.null_print
     listensock.bind(("0.0.0.0", configuration.port))
     listensock.listen(2)

@@ -1,5 +1,5 @@
 ﻿from __future__ import print_function
-import socket, sys, re, select, readline, threading
+import socket, ssl, sys, re, select, readline, threading
 import common, client_common
 
 # Globals
@@ -202,7 +202,10 @@ def run(config):
     global configuration, chat_running, listen, your_username
     configuration = config
     try:
-        serversock = common.Communication(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "S")
+
+        serversock = ssl.wrap_socket(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+
+        serversock = common.Communication(serversock, "S")
         serversock.print_func = print_threaded if configuration.verbosity >= 1 else common.null_print
         serversock.connect((configuration.host, configuration.port))
 
