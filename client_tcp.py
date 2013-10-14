@@ -95,12 +95,14 @@ def command_accept(server, args):
             bytes_received = 0
             while bytes_received < listen.transfer[0]:
                 bytes = transfer.sock.recv(min(2048, listen.transfer[0] - bytes_received))
+                if len(bytes) == 0:
+                    raise "DEU MERDA"
                 open_file.write(bytes)
                 bytes_received += len(bytes)
                 print("%s% done", 100 * (bytes_received/listen.transfer[0]))
             transfer.close()
-        except socket.timeout:
-            print("Conection failure.")
+        except (socket.timeout, string) as x:
+            print("Conection failure: " + repr(x))
         open_file.close()
     else:
         target_user = args[0]
@@ -327,13 +329,16 @@ def run(config):
                     listen.transfer = None
                     continue
                     
-                listen.transfer[1].close()
                 print("Starting file transfer...")
+                file_transfer.settimeout(None)
                 while True:
+                    stuff = select.select([], [file_transfer], [], 10)
+                    if file_transfer not in stuff[1]: continue
                     data = listen.transfer[0].read(2048)
                     if len(data) == 0: break
                     file_transfer.send(data)
                 print("File transfer complete.")
+                listen.transfer[1].close()
                 file_transfer.close()
                 listen.transfer = None
             client_common.input_handler(listen.is_chatting, commands, serversock)
