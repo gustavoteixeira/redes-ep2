@@ -13,6 +13,22 @@ your_username = None
 print_threaded = client_common.print_threaded
 raw_input_wrapper = client_common.raw_input_wrapper
 read_validusername = client_common.read_validusername
+
+class HeartbeatThread(threading.Thread):
+    def __init__(self, sock, period):
+        threading.Thread.__init__(self)
+        self.sock = sock
+        self.period = period
+        self.daemon = True
+        
+    def run(self):
+        while chat_running:
+            self.sock.lock.acquire()
+            self.sock.send_message("HEARTBEAT")
+            self.sock.get_message() == "OK"
+            self.sock.lock.release()
+            time.sleep(self.period)
+            
     
 # COMMANDS
 def command_say(server, args):
@@ -22,8 +38,10 @@ def command_say(server, args):
         print("You're not chatting with anyone.")
 
 def command_users(server, args):
+    server.lock.acquire()
     server.send("LISTUSERS\n")
     userlist = server.get_message().split(' ')
+    server.lock.release()
     print("Users:")
     for user in userlist:
         print(">> %s" % user)
@@ -43,8 +61,10 @@ def command_chat(server, args):
         print("You can't chat with yourself.")
         return
     
+    server.lock.acquire()
     server.send_message("QUERYUSERINFO %s" % target_user)
     response = server.get_message()
+    server.lock.release()
     
     # Handle ISBUSY response
     if response == "UNKNOWN_USER":
@@ -173,8 +193,10 @@ def command_help(server, args):
     print("The following commands are avaiable: " + reduce(lambda a, b: a + ", " + b, commands))
     
 def command_exit(server, args):
+    server.lock.acquire()
     server.send("LOGOUT\n")
     server.get_message()
+    server.lock.release()
     global chat_running
     chat_running = False
     
@@ -303,6 +325,7 @@ def run(config):
         serversock = common.Communication(serversock, "S")
         serversock.print_func = print_threaded if configuration.verbosity >= 1 else common.null_print
         serversock.connect((configuration.host, configuration.port))
+        serversock.lock = threading.Lock()
 
         listen = ClientListener(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
         listen.start()
@@ -320,6 +343,9 @@ def run(config):
             else:
                 print("Welcome, %s!" % your_username)
                 break
+                
+        heartbeat_thread = HeartbeatThread(serversock, config.heartbeat)
+        heartbeat_thread.start()
         
         while chat_running:
             if listen.transfer and listen.transfer[2]:
