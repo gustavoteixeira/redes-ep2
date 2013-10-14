@@ -1,5 +1,5 @@
 from __future__ import print_function
-import socket, ssl, sys, threading, select
+import socket, ssl, sys, threading, select, datetime
 import common
 
 server_running = True
@@ -16,6 +16,11 @@ class ClientThread(threading.Thread):
         self.running = True
         self.username = None
         self.buffer = []
+        self.log_file = open("server.log", "a")
+        
+    def log(self, msg):
+        name = self.username if self.username else "Guest"
+        self.log_file.write(str(datetime.datetime.now()) + (": User %s -- " % name) + msg + "\n")
         
     def fetch_messages(self):
         try:
@@ -37,6 +42,7 @@ class ClientThread(threading.Thread):
     def command_login(self, args):
         if self.username:
             self.socket.send("ALREADY_LOGGED_IN\n")
+            self.log("Re-login attempt.")
             return
             
         try:
@@ -44,19 +50,23 @@ class ClientThread(threading.Thread):
             listen_port = int(listen_port)
         except (ValueError, IndexError):
             self.socket.send("INPUT_ERROR\n")
+            self.log("Input Error.")
             return
             
         if try_username in users:
             self.socket.send("USER_ALREADY_EXISTS\n")
+            self.log("User already exists.")
             return
         
         self.username = try_username
         self.listen_port = listen_port
         users[self.username] = self
         self.socket.send("WELCOME\n")
+        self.log("Successful login.")
 
     def command_heartbeat(self, args):
         self.socket.send("OK\n")
+        self.log("Heartbeat.")
         pass
         
     def command_listusers(self, args):
@@ -68,10 +78,12 @@ class ClientThread(threading.Thread):
             return
         user = users[target_user]
         self.socket.send("%s %s\n" % (user.ip, user.listen_port))
+        self.log("Query user info.")
         
     def command_logout(self, args):
         self.running = False
         self.socket.send("BYE\n")
+        self.log("Logout.")
 
     def run(self):
         self.socket.sock.settimeout(configuration.timeout)
