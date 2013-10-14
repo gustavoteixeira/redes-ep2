@@ -100,9 +100,9 @@ def command_accept(server, args):
                     raise "DEU MERDA"
                 open_file.write(bytes)
                 bytes_received += len(bytes)
-                print("%s% done", 100 * (bytes_received/listen.transfer[0]))
+                sys.stdout.write("\r{0}% done".format(str(100 * (float(bytes_received)/listen.transfer[0]))))
             transfer.close()
-        except (socket.timeout, string) as x:
+        except (socket.timeout, str) as x:
             print("Conection failure: " + repr(x))
         diff = datetime.datetime.now() - start
         print("Finished received file in " + str(diff))
@@ -309,7 +309,7 @@ def run(config):
         
         # Login Process
         while True:
-            your_username = read_validusername()
+            your_username = read_validusername() if not config.username else config.username
             serversock.send("LOGIN %s %s\n" % (your_username, listen.get_port()))
             
             response = serversock.receive()
