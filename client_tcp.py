@@ -85,8 +85,8 @@ def command_accept(server, args):
         except IOError:
             print("Cannot open file '%s' for writing." % filename)
     
-        transfer = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_DGRAM), "F")
-        transfer.connect(master.transfer[1])
+        transfer = common.VerboseSocket(socket.socket(socket.AF_INET, socket.SOCK_STREAM), "F")
+        transfer.connect(listen.transfer[1])
         listen.chatting[1].send_message("TRANSFEROK %s\n" % transfer.sock.getsockname()[1])
         transfer.sock.settimeout(30)
         
@@ -94,10 +94,10 @@ def command_accept(server, args):
         try:
             bytes_received = 0
             while bytes_received < listen.transfer[0]:
-                bytes = transfer.sock.recv(min(2048, master.transfer[0] - bytes_received))
+                bytes = transfer.sock.recv(min(2048, listen.transfer[0] - bytes_received))
                 open_file.write(bytes)
                 bytes_received += len(bytes)
-                print("%s% done", 100 * (bytes_received/master.transfer[0]))
+                print("%s% done", 100 * (bytes_received/listen.transfer[0]))
             transfer.close()
         except socket.timeout:
             print("Conection failure.")
@@ -150,7 +150,7 @@ def command_sendfile(server, args):
     
     size = os.fstat(open_file.fileno()).st_size
     
-    transfer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    transfer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     transfer.bind(("0.0.0.0", 0))
     new_listen = transfer.getsockname()[1]
     
@@ -261,7 +261,7 @@ class ClientListener(threading.Thread):
                             self.transfer = [int(size), (self.chatting[1].getpeername()[0], int(new_listen)), False] # False means "I'm not sending"
                         except ValueError as e:
                             return
-                        print_threaded("%s requested to send a file '%s' with size %s to you." % (fetch_name(address), filename, size))
+                        print_threaded("%s requested to send a file '%s' with size %s to you." % (self.chatting[0], filename, size))
                         print_threaded("Accept it with /accept local_filename or /refuse.")
                         
                     elif message[0] == "TRANSFEROK":
@@ -275,9 +275,9 @@ class ClientListener(threading.Thread):
                         
                     elif message[0] == "TRANSFERREFUSED":
                         if not self.transfer: return
-                        print_threaded("%s refused your file transfer." % (fetch_name(address)))
-                        self.transfer[0].close()
-                        self.transfer[1].close()
+                        print_threaded("%s refused your file transfer." % (self.chatting[0]))
+                        self.transfer[0].close() # file
+                        self.transfer[1].close() # socket
                         self.transfer = None
                         
                     
@@ -318,24 +318,23 @@ def run(config):
         
         while chat_running:
             if listen.transfer and listen.transfer[2]:
-                for i in range(30):
-                    ready = select.select([listen.transfer], [], [], 1)[0]
-                    if listen.transfer and listen.transfer not in ready:
-                        time.sleep(1)
-                    else:
-                        break
-                if len(listen.transfer) < 4:
+                listen.transfer[1].settimeout(30)
+                listen.transfer[1].listen(1)
+                try:
+                    file_transfer = listen.transfer[1].accept()[0]
+                except socket.timeout:
                     print("Aborting file transfer...")
                     listen.transfer = None
-                else:
-                    file_transfer = listen.transfer[1].accept((listen.chatting[1].getpeername()[0], listen.transfer[3]))
-                    print("Starting file transfer...")
-                    while True:
-                        data = listen.transfer[0].read(2048)
-                        if len(data) == 0: break
-                        listen.transfer[1].send(data)
-                    print("File transfer complete.")
-                    listen.transfer[1].close()
+                    continue
+                    
+                listen.transfer[1].close()
+                print("Starting file transfer...")
+                while True:
+                    data = listen.transfer[0].read(2048)
+                    if len(data) == 0: break
+                    file_transfer.send(data)
+                print("File transfer complete.")
+                file_transfer.close()
                 listen.transfer = None
             client_common.input_handler(listen.is_chatting, commands, serversock)
             
