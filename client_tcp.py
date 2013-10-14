@@ -1,5 +1,5 @@
 ﻿from __future__ import print_function
-import socket, ssl, sys, re, select, readline, threading, time, os
+import socket, ssl, sys, re, select, readline, threading, time, os, datetime
 import common, client_common
 
 # Globals
@@ -91,6 +91,7 @@ def command_accept(server, args):
         transfer.sock.settimeout(30)
         
         print("Writing file from %s to %s..." % (listen.chatting[0], filename))
+        start = datetime.datetime.now()
         try:
             bytes_received = 0
             while bytes_received < listen.transfer[0]:
@@ -103,6 +104,8 @@ def command_accept(server, args):
             transfer.close()
         except (socket.timeout, string) as x:
             print("Conection failure: " + repr(x))
+        diff = datetime.datetime.now() - start
+        print("Finished received file in " + str(diff))
         open_file.close()
     else:
         target_user = args[0]
