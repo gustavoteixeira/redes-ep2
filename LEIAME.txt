@@ -1,0 +1,12 @@
+Nomes:
+Gustavo Teixeira da Cunha Coelho
+Henrique Gemignani Passos Lima
+
+----------------
+Dependencias:
+ - Python 2.7 (módulo argparse)
+ - Unix (módulo readline)
+
+O programa se separa em dois arquivos, client.py e server.py para o cliente e o servidor do chat, respectivamente.
+
+Para ajuda em quais são os argumentos de linha de comando, utilize-se do argumento --help (ou -h).
